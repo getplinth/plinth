@@ -28,3 +28,11 @@ scripts/e2e.sh:generic-password-rule:99
 scripts/e2e.sh:generic-password-rule:100
 scripts/e2e.sh:generic-api-key:83
 scripts/e2e.sh:generic-api-key:100
+
+# Helm chart: documentation placeholders (the literal word PASSWORD), a made-up
+# value in a render test, and the throwaway in-cluster database of the chart's
+# cluster test (a *.svc.cluster.local name that exists only while it runs).
+deploy/helm/plinth/values.yaml:generic-connection-string-credentials:45
+docs/deploy.md:generic-connection-string-credentials:39
+deploy/helm/chart_test.go:generic-connection-string-credentials:295
+scripts/helm-e2e.sh:generic-connection-string-credentials:60

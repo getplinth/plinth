@@ -1,0 +1,23 @@
+{{- if .Values.networkPolicy.enabled }}
+# Limits who can reach Plinth. Outgoing traffic is not restricted: Plinth must
+# reach your identity provider, database, Git host, registry and clusters.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "plinth.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "plinth.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "plinth.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- toYaml .Values.networkPolicy.ingressFrom | nindent 8 }}
+      ports:
+        - port: http
+          protocol: TCP
+{{- end }}

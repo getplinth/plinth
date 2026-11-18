@@ -1,4 +1,4 @@
-.PHONY: build web test itest itest-k8s itest-db itest-git itest-registry itest-app e2e lint run up down demo
+.PHONY: helm-test helm-e2e build web test itest itest-k8s itest-db itest-git itest-registry itest-app e2e lint run up down demo
 
 web: ## build the web interface into web/dist (embedded by the next `go build`)
 	cd web && npm ci && npm run build
@@ -30,6 +30,14 @@ e2e: ## whole request through all real drivers on a disposable stack (slow; need
 
 itest-app: ## whole application (API, store, auth, worker) on a disposable PostgreSQL, fake drivers
 	go test -tags=integration -race -count=1 ./internal/api/...
+
+helm-test: ## lint and render the Helm chart with many value sets (needs helm)
+	helm lint deploy/helm/plinth -f deploy/helm/plinth/ci/minimal-values.yaml
+	helm lint deploy/helm/plinth -f deploy/helm/plinth/ci/full-values.yaml
+	go test -count=1 ./deploy/helm/
+
+helm-e2e: ## install the chart on a throwaway k3d cluster and test it (slow; needs Docker, k3d, kubectl, helm)
+	./scripts/helm-e2e.sh
 
 lint:
 	go vet ./...

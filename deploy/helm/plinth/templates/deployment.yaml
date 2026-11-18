@@ -1,0 +1,143 @@
+{{- include "plinth.validate" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "plinth.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "plinth.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: 5
+  # Replicas are safe to run side by side: requests are claimed with a lease
+  # and migrations take a database lock. A new pod is started and ready before
+  # an old one is stopped, so upgrades do not interrupt the service.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "plinth.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "plinth.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- if or .Values.database.url .Values.masterKey.value }}
+        # Roll the pods when a chart-managed secret changes.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "plinth.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      # On stop the pod first waits (preStop) while the Service stops sending it
+      # traffic, then the server stops accepting requests, hands running
+      # onboarding requests back to the queue, and exits within about 20 seconds.
+      terminationGracePeriodSeconds: {{ add 30 (int .Values.shutdownDelaySeconds) }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: plinth
+          image: {{ include "plinth.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.containerPort }}
+              protocol: TCP
+          env:
+            - name: PLINTH_LISTEN_ADDR
+              value: {{ printf ":%d" (int .Values.containerPort) | quote }}
+            - name: PLINTH_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "plinth.databaseSecretName" . }}
+                  key: {{ include "plinth.databaseSecretKey" . }}
+            - name: PLINTH_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "plinth.masterKeySecretName" . }}
+                  key: {{ include "plinth.masterKeySecretKey" . }}
+            - name: PLINTH_OIDC_ISSUER
+              value: {{ .Values.config.oidc.issuer | quote }}
+            - name: PLINTH_OIDC_AUDIENCE
+              value: {{ .Values.config.oidc.audience | quote }}
+            - name: PLINTH_ADMIN_GROUP
+              value: {{ .Values.config.oidc.adminGroup | quote }}
+            - name: PLINTH_GROUPS_CLAIM
+              value: {{ .Values.config.oidc.groupsClaim | quote }}
+            - name: PLINTH_WORKERS
+              value: {{ .Values.config.workers | quote }}
+            {{- if .Values.config.oidc.allowHttp }}
+            - name: PLINTH_OIDC_ALLOW_HTTP
+              value: "true"
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if gt (int .Values.shutdownDelaySeconds) 0 }}
+          # Endpoint removal reaches every node a moment after a pod is told to
+          # stop. Without this pause a few requests would hit a closed port.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", {{ .Values.shutdownDelaySeconds | quote }}]
+          {{- end }}
+          # Starting can take a while: migrations run and the identity
+          # provider is contacted. Liveness only begins once it has started.
+          startupProbe:
+            {{- toYaml .Values.startupProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          # Ready means the database answers, so a replica that lost it leaves
+          # the Service without being restarted.
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            # Repositories are copied from a template in a scratch directory.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ .Values.tmpSizeLimit }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.topologySpread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: {{ .Values.topologySpread.topologyKey }}
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "plinth.selectorLabels" . | nindent 14 }}
+      {{- end }}

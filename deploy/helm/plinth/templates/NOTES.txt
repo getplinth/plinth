@@ -1,0 +1,33 @@
+Plinth {{ .Chart.AppVersion }} is installed as "{{ include "plinth.fullname" . }}" with {{ .Values.replicaCount }} {{ if eq (int .Values.replicaCount) 1 }}replica{{ else }}replicas{{ end }}.
+
+{{- if .Values.ingress.enabled }}
+
+Open it at:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ . }}
+{{- end }}
+{{- else }}
+
+Reach it from your machine with:
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "plinth.fullname" . }} 8080:{{ .Values.service.port }}
+and open http://127.0.0.1:8080
+{{- end }}
+
+Check the installation:
+  helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }}
+
+Your identity provider must allow this client:
+  client id     {{ .Values.config.oidc.audience }}
+  redirect URI  {{ if .Values.ingress.enabled }}{{ if .Values.ingress.tls }}https{{ else }}http{{ end }}://{{ index .Values.ingress.hosts 0 }}{{ else }}https://<your Plinth address>{{ end }}/callback
+  grant         authorization code with PKCE (public client), CORS allowed from that address
+  administrators are members of the group "{{ .Values.config.oidc.adminGroup }}"
+{{- if .Values.config.oidc.allowHttp }}
+
+WARNING: config.oidc.allowHttp is on. Use it for local testing only.
+{{- end }}
+{{- if or .Values.database.url .Values.masterKey.value }}
+
+NOTE: a value given inline is stored in this release's data and shown by
+`helm get values`. Prefer database.existingSecret and masterKey.existingSecret,
+and keep a copy of the master key: without it stored integrations cannot be read.
+{{- end }}

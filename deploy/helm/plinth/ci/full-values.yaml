@@ -1,0 +1,47 @@
+# Production-shaped configuration: ingress with TLS, restricted network, tuned.
+replicaCount: 3
+image:
+  repository: registry.example.com/platform/plinth
+  tag: "1.2.3"
+imagePullSecrets:
+  - name: registry-pull
+config:
+  oidc:
+    issuer: https://login.example.com/realms/platform
+    audience: plinth
+    adminGroup: platform-admins
+    groupsClaim: roles
+  workers: 4
+database:
+  existingSecret: plinth-database
+masterKey:
+  existingSecret: plinth-master-key
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+  hosts: [plinth.example.com]
+  tls:
+    - secretName: plinth-tls
+      hosts: [plinth.example.com]
+networkPolicy:
+  enabled: true
+podDisruptionBudget:
+  minAvailable: 2
+resources:
+  requests: { cpu: 250m, memory: 256Mi }
+  limits: { memory: 1Gi }
+nodeSelector:
+  kubernetes.io/os: linux
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: platform
+    effect: NoSchedule
+priorityClassName: platform-critical
+podAnnotations:
+  example.com/owner: platform-team
+extraEnv:
+  - name: TZ
+    value: UTC

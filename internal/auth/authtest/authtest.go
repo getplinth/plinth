@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
@@ -24,6 +25,7 @@ type Provider struct {
 	key      *rsa.PrivateKey
 	mux      *http.ServeMux
 	login    *loginState
+	public   string // address clients use, when it differs from where we listen
 }
 
 // New starts a provider on a random port whose tokens are issued for audience.
@@ -56,10 +58,10 @@ func newProvider(audience string, l net.Listener) (*Provider, error) {
 		cors(w)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"issuer":                                p.Server.URL,
-			"jwks_uri":                              p.Server.URL + "/keys",
-			"authorization_endpoint":                p.Server.URL + "/authorize",
-			"token_endpoint":                        p.Server.URL + "/token",
+			"issuer":                                p.Issuer(),
+			"jwks_uri":                              p.Issuer() + "/keys",
+			"authorization_endpoint":                p.Issuer() + "/authorize",
+			"token_endpoint":                        p.Issuer() + "/token",
 			"id_token_signing_alg_values_supported": []string{"RS256"},
 			"response_types_supported":              []string{"code"},
 			"code_challenge_methods_supported":      []string{"S256"},
@@ -82,8 +84,19 @@ func newProvider(audience string, l net.Listener) (*Provider, error) {
 	return p, nil
 }
 
-func (p *Provider) Close()         { p.Server.Close() }
-func (p *Provider) Issuer() string { return p.Server.URL }
+func (p *Provider) Close() { p.Server.Close() }
+
+// Issuer is the address clients (and tokens) know the provider by.
+func (p *Provider) Issuer() string {
+	if p.public != "" {
+		return p.public
+	}
+	return p.Server.URL
+}
+
+// SetPublicURL makes the provider advertise a different address than the one
+// it listens on, for example a Kubernetes service name. Call it before use.
+func (p *Provider) SetPublicURL(u string) { p.public = strings.TrimRight(u, "/") }
 
 // Claims describes a token to mint. Zero values get sensible defaults.
 type Claims struct {
@@ -99,7 +112,7 @@ type Claims struct {
 // Token returns a signed token for the claims.
 func (p *Provider) Token(c Claims) string {
 	if c.Issuer == "" {
-		c.Issuer = p.Server.URL
+		c.Issuer = p.Issuer()
 	}
 	if c.Audience == "" {
 		c.Audience = p.Audience

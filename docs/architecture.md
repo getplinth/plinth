@@ -126,6 +126,7 @@ flowchart LR
 | `internal/crypto` | envelope encryption of integration credentials |
 | `internal/config` | environment configuration |
 | `web` | React web interface, embedded into the binary (see [ui.md](ui.md)) |
+| `deploy/helm/plinth` | Helm chart, with render tests and a cluster test (see [deploy.md](deploy.md)) |
 | `internal/demo`, `cmd/plinth-demo` | simulated drivers and a stand-in identity provider for trying the interface |
 
 ## Planned

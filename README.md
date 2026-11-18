@@ -6,7 +6,7 @@ databases, secret stores) and bundle them into **blueprints**. Developers fill
 in one form; Plinth provisions the repository, registry project, namespace
 (with RBAC, quota and network policy) and database, then reports status.
 
-> Status: the engine, API and web interface work and are tested end to end against real systems. Try the interface with `make demo` (see [docs/ui.md](docs/ui.md)). Not built yet: tenant members, a Helm chart.
+> Status: the engine, API and web interface work and are tested end to end against real systems. Try the interface with `make demo` (see [docs/ui.md](docs/ui.md)). Not built yet: tenant members.
 
 ## Concepts
 
@@ -17,7 +17,7 @@ in one form; Plinth provisions the repository, registry project, namespace
 
 Plinth is product-neutral: GitHub or GitLab, any container registry, any Kubernetes distribution, Postgres or MySQL are all just drivers.
 
-Docs: [architecture](docs/architecture.md) (Mermaid diagrams), [web interface](docs/ui.md), [API and operation](docs/api.md), [onboarding flow](docs/onboarding.md), and one page per driver in [docs/drivers](docs/drivers).
+Docs: [architecture](docs/architecture.md) (Mermaid diagrams), [deploying on Kubernetes](docs/deploy.md), [web interface](docs/ui.md), [API and operation](docs/api.md), [onboarding flow](docs/onboarding.md), and one page per driver in [docs/drivers](docs/drivers).
 
 ## Develop
 
@@ -42,6 +42,6 @@ internal/orchestrator/ step runner (retry, resume)
 internal/store/        Postgres access + migrations
 internal/config/       env configuration
 web/                   React web interface (embedded in the binary)
-deploy/helm/           Helm chart (not started)
+deploy/helm/plinth/     Helm chart (see docs/deploy.md)
 docs/                  architecture, legacy mapping
 ```

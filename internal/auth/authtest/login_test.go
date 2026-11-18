@@ -197,3 +197,35 @@ func TestBrowserCanReadDiscoveryAndKeys(t *testing.T) {
 		}
 	}
 }
+
+// A provider behind a service name advertises that name in discovery and in
+// the tokens it issues, so a verifier configured with it accepts them.
+func TestPublicURLIsWhatTokensAndDiscoveryAdvertise(t *testing.T) {
+	f := newFlow(t)
+	f.p.SetPublicURL("http://devidp.idp.svc:9100/")
+
+	resp, err := http.Get(f.p.Server.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var doc map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&doc)
+	for _, k := range []string{"issuer", "jwks_uri", "authorization_endpoint", "token_endpoint"} {
+		if !strings.HasPrefix(doc[k].(string), "http://devidp.idp.svc:9100") {
+			t.Errorf("%s = %v, want the public address", k, doc[k])
+		}
+	}
+	if doc["issuer"] != "http://devidp.idp.svc:9100" {
+		t.Errorf("issuer must not keep a trailing slash: %v", doc["issuer"])
+	}
+	if f.p.Issuer() != "http://devidp.idp.svc:9100" {
+		t.Errorf("Issuer() = %s", f.p.Issuer())
+	}
+	// Tokens carry the public issuer.
+	tok := f.p.Token(Claims{Sub: "x"})
+	payload, _ := base64.RawURLEncoding.DecodeString(strings.Split(tok, ".")[1])
+	if !strings.Contains(string(payload), `"iss":"http://devidp.idp.svc:9100"`) {
+		t.Errorf("token issuer: %s", payload)
+	}
+}

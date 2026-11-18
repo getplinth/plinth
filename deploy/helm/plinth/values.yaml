@@ -1,0 +1,154 @@
+# Default values for the Plinth chart.
+#
+# The three things you must provide:
+#   1. config.oidc.issuer and config.oidc.audience   your identity provider
+#   2. database.existingSecret                        PostgreSQL connection URL
+#   3. masterKey.existingSecret                       32 random bytes, base64
+# Everything else has a working default.
+
+image:
+  repository: ghcr.io/getplinth/plinth
+  # Defaults to the chart's appVersion. Pin a digest for reproducible installs.
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Replicas can run side by side: onboarding requests are claimed with a lease
+# and database migrations take a lock. Two give you rolling upgrades and
+# survive a node loss.
+replicaCount: 2
+
+config:
+  oidc:
+    # Issuer URL of your OpenID Connect provider. Must be https.
+    issuer: ""
+    # Client id registered for Plinth. Tokens must be issued for it.
+    audience: ""
+    # Members of this group are administrators.
+    adminGroup: plinth-admins
+    # Token claim that lists a user's groups.
+    groupsClaim: groups
+    # Permit an http:// issuer. For throwaway local testing only.
+    allowHttp: false
+  # Onboarding requests processed at the same time, per replica (1 to 32).
+  workers: 2
+
+# PostgreSQL holding Plinth's state. The chart does not run a database: use a
+# managed one or an operator, and back it up (it holds requests, blueprints and
+# the encrypted integration settings).
+database:
+  # A Secret you manage, holding the connection URL such as
+  #   postgres://plinth:PASSWORD@db.example.com:5432/plinth?sslmode=verify-full
+  existingSecret: ""
+  existingSecretKey: database-url
+  # Alternative: give the URL here and the chart creates the Secret. The URL
+  # then appears in the release data and in `helm get values`.
+  url: ""
+
+# Key that encrypts the integration settings (tokens and passwords of the
+# systems Plinth manages) at rest.
+masterKey:
+  # A Secret you manage, with 32 random bytes in base64 (`plinth genkey`).
+  existingSecret: ""
+  existingSecretKey: master-key
+  # Alternative: give it here. It then appears in the release data.
+  value: ""
+
+containerPort: 8080
+
+service:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []        # for example: [plinth.example.com]
+  tls: []          # for example: [{secretName: plinth-tls, hosts: [plinth.example.com]}]
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+# Seconds a stopping pod keeps serving while the Service stops sending it
+# traffic. Prevents failed requests during upgrades and node drains.
+# 0 disables it.
+shutdownDelaySeconds: 5
+
+# Scratch space for copying template repositories.
+tmpSizeLimit: 1Gi
+
+podDisruptionBudget:
+  enabled: true     # only rendered when replicaCount is above 1
+  minAvailable: 1
+  maxUnavailable: ""  # if set, used instead of minAvailable
+
+# Spread replicas across nodes when possible.
+topologySpread:
+  enabled: true
+  topologyKey: kubernetes.io/hostname
+
+# Restrict who can reach Plinth. Outgoing traffic is not restricted, because
+# Plinth must reach your identity provider, database, Git host, registry and
+# clusters.
+networkPolicy:
+  enabled: false
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+
+# Hardened by default: not root, no extra privileges, read-only root filesystem.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+startupProbe:
+  httpGet: { path: /healthz, port: http }
+  periodSeconds: 2
+  failureThreshold: 60
+livenessProbe:
+  httpGet: { path: /healthz, port: http }
+  periodSeconds: 10
+  failureThreshold: 3
+readinessProbe:
+  httpGet: { path: /readyz, port: http }
+  periodSeconds: 5
+  failureThreshold: 2
+
+podAnnotations: {}
+podLabels: {}
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Extra environment variables, in the usual Kubernetes form.
+extraEnv: []
+
+# Used by `helm test`.
+tests:
+  image: busybox:1.37

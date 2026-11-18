@@ -1,0 +1,18 @@
+# Values for the end-to-end test (scripts/helm-e2e.sh). The identity provider
+# is the in-cluster stand-in, which speaks plain http: testing only.
+replicaCount: 2
+image:
+  repository: plinth
+  tag: helm-e2e
+  pullPolicy: Never
+config:
+  oidc:
+    issuer: http://devidp.idp.svc.cluster.local:9100
+    audience: plinth-ui
+    allowHttp: true
+database:
+  existingSecret: plinth-database
+masterKey:
+  existingSecret: plinth-master-key
+tests:
+  image: busybox:1.37

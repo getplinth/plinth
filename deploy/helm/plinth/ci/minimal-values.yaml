@@ -1,0 +1,9 @@
+# Smallest valid configuration: Secrets you manage, https identity provider.
+config:
+  oidc:
+    issuer: https://idp.example.com
+    audience: plinth
+database:
+  existingSecret: plinth-database
+masterKey:
+  existingSecret: plinth-master-key

@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "plinth.fullname" . }}-test
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "plinth.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: check
+      image: {{ .Values.tests.image | quote }}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+      command: ["/bin/sh", "-ec"]
+      args:
+        - |
+          base=http://{{ include "plinth.fullname" . }}:{{ .Values.service.port }}
+          echo "health:";    wget -qO- "$base/healthz" | grep -x ok
+          echo "database:";  wget -qO- "$base/readyz"  | grep -x ready
+          echo "sign-in settings:"; wget -qO- "$base/api/v1/config" | grep -F {{ .Values.config.oidc.issuer | quote }}
+          echo "the API refuses anonymous callers:"
+          if wget -q -O /dev/null "$base/api/v1/me" 2>/dev/null; then echo "unexpectedly allowed"; exit 1; fi
+          echo "all checks passed"

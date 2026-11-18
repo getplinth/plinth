@@ -14,6 +14,17 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: cd web && npm ci && npm run typecheck && npm test && npm run build
       - run: cd web && npm audit --omit=dev
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+      - run: make helm-test
   go:
     runs-on: ubuntu-latest
     steps:

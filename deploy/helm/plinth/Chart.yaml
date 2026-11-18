@@ -1,0 +1,11 @@
+apiVersion: v2
+name: plinth
+description: Self-service project onboarding. Developers request a project; Plinth creates the repository, registry project, namespace and database and delivers the credentials.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0-0"
+home: https://github.com/getplinth/plinth
+sources:
+  - https://github.com/getplinth/plinth
+keywords: [platform-engineering, onboarding, developer-portal, self-service]

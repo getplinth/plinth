@@ -1,0 +1,68 @@
+# Dependencies for the chart's end-to-end test on a throwaway cluster:
+# a PostgreSQL database and a stand-in identity provider (NO PASSWORDS: it
+# lets anyone sign in as any listed user). Never deploy this anywhere real.
+apiVersion: v1
+kind: Namespace
+metadata: { name: db }
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: idp }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: postgres, namespace: db }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: postgres } }
+  template:
+    metadata: { labels: { app: postgres } }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: POSTGRES_USER, value: plinth }
+            - { name: POSTGRES_PASSWORD, value: plinth }
+            - { name: POSTGRES_DB, value: plinth }
+          ports: [{ containerPort: 5432 }]
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "plinth", "-d", "plinth"] }
+            periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata: { name: postgres, namespace: db }
+spec:
+  selector: { app: postgres }
+  ports: [{ port: 5432 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: devidp, namespace: idp }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: devidp } }
+  template:
+    metadata: { labels: { app: devidp } }
+    spec:
+      containers:
+        - name: devidp
+          image: plinth-devidp:helm-e2e
+          imagePullPolicy: Never
+          args:
+            - -addr=:9100
+            - -issuer=http://devidp.idp.svc.cluster.local:9100
+            - -audience=plinth-ui
+          ports: [{ containerPort: 9100 }]
+          readinessProbe:
+            httpGet: { path: /.well-known/openid-configuration, port: 9100 }
+            periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata: { name: devidp, namespace: idp }
+spec:
+  selector: { app: devidp }
+  ports: [{ port: 9100 }]
