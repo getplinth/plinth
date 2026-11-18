@@ -1,0 +1,10 @@
+/bin/
+.env
+*.log
+.DS_Store
+node_modules/
+web/dist/*
+!web/dist/.gitkeep
+coverage.out
+.itest/
+.demo/

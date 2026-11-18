@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: plinth
+      POSTGRES_PASSWORD: plinth
+      POSTGRES_DB: plinth
+    ports: ["127.0.0.1:5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plinth -d plinth"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes: [pgdata:/var/lib/postgresql/data]
+volumes:
+  pgdata:

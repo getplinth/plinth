@@ -1,0 +1,37 @@
+{
+  "tiers": {
+    "bronze": {
+      "pods": 5,
+      "requests": { "cpu": "2.5", "memory": "2.5Gi" },
+      "limits":   { "cpu": "3.5", "memory": "3.5Gi" },
+      "limitRange": {
+        "min": { "cpu": "200m", "memory": "256Mi" },
+        "max": { "cpu": "1", "memory": "1Gi" },
+        "default": { "cpu": "500m", "memory": "512Mi" },
+        "defaultRequest": { "cpu": "500m", "memory": "512Mi" }
+      }
+    },
+    "silver": {
+      "pods": 10,
+      "requests": { "cpu": "10", "memory": "10Gi" },
+      "limits":   { "cpu": "12", "memory": "12Gi" },
+      "limitRange": {
+        "min": { "cpu": "500m", "memory": "512Mi" },
+        "max": { "cpu": "2", "memory": "2Gi" },
+        "default": { "cpu": "1000m", "memory": "1Gi" },
+        "defaultRequest": { "cpu": "1000m", "memory": "1Gi" }
+      }
+    },
+    "gold": {
+      "pods": 15,
+      "requests": { "cpu": "30", "memory": "30Gi" },
+      "limits":   { "cpu": "34", "memory": "34Gi" },
+      "limitRange": {
+        "min": { "cpu": "1", "memory": "1Gi" },
+        "max": { "cpu": "4", "memory": "4Gi" },
+        "default": { "cpu": "2000m", "memory": "2Gi" },
+        "defaultRequest": { "cpu": "2000m", "memory": "2Gi" }
+      }
+    }
+  }
+}

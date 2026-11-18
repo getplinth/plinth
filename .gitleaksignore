@@ -1,0 +1,30 @@
+# Reviewed false positives for secret scanning. Every entry below is a
+# throwaway value for a disposable local container, a test constant, a
+# documented example, or a line that reads a secret from a running system.
+# None is a credential for a real service: hosts are localhost, 127.0.0.1,
+# *.example.com or *.invalid. Fingerprints are file:rule:line, so an entry
+# must be revisited if its line moves. Real secrets never belong here.
+
+# Example configuration and the local demo database (docker-compose.yml)
+.env.example:generic-connection-string-credentials:2
+cmd/plinth-demo/main.go:generic-connection-string-credentials:41
+
+# Unit-test constants (checking that secrets are not leaked in errors and logs)
+internal/provider/postgres/driver_test.go:generic-password-rule:34
+internal/config/config_test.go:generic-connection-string-credentials:71
+
+# Integration and end-to-end tests: passwords for containers that exist only
+# while the test runs (scripts/harbor.sh, scripts/e2e.sh and the Go tests)
+internal/provider/postgres/integration_test.go:generic-password-rule:44
+internal/api/integration_test.go:generic-connection-string-credentials:169
+internal/onboarding/e2e_test.go:generic-password-rule:403
+scripts/harbor.sh:generic-password-rule:12
+scripts/harbor.sh:generic-password-rule:34
+scripts/harbor.sh:generic-password-rule:36
+scripts/harbor.sh:generic-password-rule:98
+scripts/harbor.sh:generic-api-key:12
+scripts/e2e.sh:generic-password-rule:32
+scripts/e2e.sh:generic-password-rule:99
+scripts/e2e.sh:generic-password-rule:100
+scripts/e2e.sh:generic-api-key:83
+scripts/e2e.sh:generic-api-key:100

@@ -1,0 +1,61 @@
+# Identity Plinth uses to manage a target cluster.
+#
+# Apply once per cluster, then give the integration the ServiceAccount's CA,
+# API server URL and a (short-lived) token:
+#   kubectl apply -f plinth-rbac.yaml
+#   kubectl -n plinth-system create token plinth --duration=24h
+#
+# This is a highly privileged identity: it can create namespaces and, through
+# `escalate`/`bind`, grant namespace-scoped permissions anywhere. Protect the
+# token like a cluster-admin credential and prefer short-lived tokens.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: plinth-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: plinth
+  namespace: plinth-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: plinth
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  # Server-side apply of a new object needs create + patch. No `get` on
+  # secrets: Plinth writes credentials but never reads them back.
+  - apiGroups: [""]
+    resources: ["serviceaccounts", "resourcequotas", "limitranges"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "create", "patch"]
+  # Required to create the tenant Role and bind it without Plinth itself
+  # holding every permission the Role grants.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles"]
+    verbs: ["escalate", "bind"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: plinth
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: plinth
+subjects:
+  - kind: ServiceAccount
+    name: plinth
+    namespace: plinth-system
