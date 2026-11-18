@@ -153,6 +153,12 @@ func run(log *slog.Logger) error {
 // seed creates ready-to-use blueprints on the first run: "standard" runs at
 // once, "regulated" waits for an administrator's approval.
 func seed(ctx context.Context, st *store.Store) error {
+	// A database left over from an earlier run can only be read with the key
+	// that was used then (kept in .demo/master.key). Say so, instead of
+	// letting every request fail later.
+	if _, _, err := st.IntegrationConfig(ctx, "demo-git"); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("the demo database was created with a different key (.demo/master.key was removed or replaced), so it cannot be read.\nReset it with:  docker compose down -v && docker compose up -d --wait postgres\n(%w)", err)
+	}
 	if _, err := st.GetBlueprint(ctx, "standard"); err != nil {
 		for _, in := range []struct {
 			kind, name string

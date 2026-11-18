@@ -34,6 +34,7 @@ export function Layout() {
           <nav className="nav" aria-label="Main">
             <NavLink to="/" end>Requests</NavLink>
             <NavLink to="/new">New request</NavLink>
+            <NavLink to="/teams">Teams</NavLink>
             {me.role === 'admin' && (
               <>
                 <span className="nav-label" aria-hidden="true">Admin</span>

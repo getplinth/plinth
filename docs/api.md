@@ -42,7 +42,10 @@ The role is refreshed from the token on every call, so removing someone from the
 | `POST`, `PUT /{name}`, `DELETE /{name}` | admin | manage blueprints |
 | `GET /api/v1/quota-tiers` | user | available tiers |
 | `POST /api/v1/requests` | user | submit `{blueprint, tenant, projects[]}`; returns `202` and the request |
-| `GET /api/v1/requests`, `GET /{id}` | user | own requests (`?all=true` for admins; `?status=awaiting_approval` filters); status, per-step state, outputs, and the decision |
+| `GET /api/v1/requests`, `GET /{id}` | user | your requests and your teams' (`?all=true` for admins; `?status=awaiting_approval` filters); status, per-step state, outputs, and the decision |
+| `GET /api/v1/tenants`, `GET /{name}` | user | teams you belong to (`?all=true` for admins), and one team with its members and projects |
+| `POST /api/v1/tenants/{name}/members` | owner, admin | add a person who has signed in, by e-mail (`email`, `role`) |
+| `PUT`, `DELETE /api/v1/tenants/{name}/members/{user}` | owner, admin (anyone can DELETE themselves) | change a role / remove or leave |
 | `POST /api/v1/requests/{id}/retry` | owner or admin | re-queue a failed request; finished steps are not repeated |
 | `POST /api/v1/requests/{id}/approve` | admin, never the requester | release a request that is awaiting approval (optional `note`) |
 | `POST /api/v1/requests/{id}/reject` | admin | refuse it; a `note` of at least 3 characters is required |
@@ -70,6 +73,26 @@ stateDiagram-v2
 
 A worker claims a request with a lease (`FOR UPDATE SKIP LOCKED`) and refreshes it each time it saves progress. If the worker dies the lease expires and another worker resumes from the saved state. A worker that loses its lease stops without recording an outcome. On shutdown, running requests are handed back at once.
 
+## Teams
+
+A team (tenant) has **owners** and **members**. The first request for a new team name creates it and makes the requester its owner; after that, only people in the team can request for it.
+
+| | administrator | owner | member | everyone else |
+|---|---|---|---|---|
+| See the team, its people and projects | yes | yes | yes | no (404, as if it did not exist) |
+| Request projects for the team | yes | yes | yes | no (403, "ask one of its owners to add you") |
+| See the team's requests | yes | yes | yes | no (404) |
+| Retry a failed request | yes | yes | yes | no |
+| Withdraw a waiting request | yes | yes | only their own | no |
+| Add, remove, change roles | yes | yes | no (403); can **leave** | no |
+| Approve a request | yes (not their own) | no | no | no |
+
+- **Adding people.** By e-mail address, compared without regard to case, and only people who have **signed in to Plinth at least once** (Plinth learns who someone is from their login). Otherwise the answer says to ask them to sign in first. If two accounts share one address it refuses (409) rather than guess.
+- **A team always keeps an owner.** The last owner cannot be demoted, removed, or leave (409), not even by an administrator. Two owners removing each other at the same moment still leave one: changes lock the team.
+- **Leaving.** Ends access to the team and its requests. What you requested yourself stays visible to you, but you cannot retry or withdraw it any more.
+- **Everything is audited**: `tenant.create`, `tenant.member.add`, `.role`, `.remove`, `.leave`, with the e-mail addresses and roles involved.
+- Existing teams keep their owner when upgrading (migration `0003`).
+
 ## Approval
 
 A blueprint can be marked **needs approval** (`requires_approval`). Requests for it are validated and stored as usual, but wait in `awaiting_approval`: no worker picks them up and no system is contacted until an administrator approves.
@@ -85,7 +108,7 @@ A blueprint can be marked **needs approval** (`requires_approval`). Requests for
 
 - **Credentials of external systems** are envelope-encrypted (a per-record key, wrapped by the master key, bound to the row). They are decrypted only by workers and the validate endpoint, and never returned: the API shows key *names* only. A ciphertext copied to another row does not decrypt.
 - **Credentials created for projects** (registry, database) are never stored. They go straight to their destinations; the request state, API responses and audit log contain none. Tests scan the database for them.
-- **Tenant ownership.** The first request for a tenant makes the requester its owner. Others are refused (403) unless they are admins, so nobody can add projects to another team's tenant.
+- **Teams.** Only members of a team (and administrators) can request projects for it, so nobody can add projects to another team's name. See *Teams* above.
 - **Name collisions.** Derived names (namespace, registry project) are globally unique; tenant `a-b` + project `c` and tenant `a` + project `b-c` would collide, so the second is refused (409) before anything is provisioned.
 - **Other people's requests** return 404, not 403, so their existence is not revealed.
 - Strict JSON (unknown fields rejected), 1 MiB body limit, per-user rate limit on submit and retry (burst 5, 10 per minute), `no-store` and restrictive headers on all responses, and request logs that never contain tokens, bodies or query strings.

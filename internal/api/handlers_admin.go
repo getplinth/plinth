@@ -32,10 +32,20 @@ func (s *Server) storeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "not found")
+	case errors.Is(err, store.ErrNotMember):
+		writeErr(w, http.StatusForbidden, "you are not a member of this team: ask one of its owners to add you")
+	case errors.Is(err, store.ErrNotOwner):
+		writeErr(w, http.StatusForbidden, "only team owners can do this")
+	case errors.Is(err, store.ErrLastOwner):
+		writeErr(w, http.StatusConflict, "a team needs at least one owner: make someone else an owner first")
+	case errors.Is(err, store.ErrUserUnknown):
+		writeErr(w, http.StatusNotFound, "nobody with that e-mail address has signed in to Plinth yet: ask them to sign in once, then add them")
+	case errors.Is(err, store.ErrAmbiguousEmail):
+		writeErr(w, http.StatusConflict, "more than one account has that e-mail address, so it cannot identify one person: ask an administrator")
 	case errors.Is(err, store.ErrSelfApproval):
 		writeErr(w, http.StatusForbidden, store.ErrSelfApproval.Error()+"; another administrator has to")
 	case errors.Is(err, store.ErrForbidden):
-		writeErr(w, http.StatusForbidden, "this tenant belongs to another user")
+		writeErr(w, http.StatusForbidden, "you do not have permission to do this")
 	case errors.Is(err, store.ErrInUse):
 		writeErr(w, http.StatusConflict, "still referenced by other objects")
 	case errors.Is(err, store.ErrConflict):

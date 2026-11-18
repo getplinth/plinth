@@ -125,18 +125,28 @@ func (s *Store) SubmitRequest(ctx context.Context, p Submit) (RequestRecord, err
 	}
 
 	tenant := naming.Normalize(p.Req.Tenant)
-	var tenantID, ownerID string
-	err = tx.QueryRow(ctx, `SELECT id, owner_id FROM tenants WHERE name = $1 FOR UPDATE`, tenant).Scan(&tenantID, &ownerID)
+	var tenantID string
+	err = tx.QueryRow(ctx, `SELECT id FROM tenants WHERE name = $1 FOR UPDATE`, tenant).Scan(&tenantID)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
+		// The first request for a team creates it and makes the requester its owner.
 		if err := tx.QueryRow(ctx, `INSERT INTO tenants (name, owner_id) VALUES ($1, $2) RETURNING id`, tenant, p.UserID).Scan(&tenantID); err != nil {
 			return RequestRecord{}, mapErr(err) // a concurrent first request: conflict
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO tenant_members (tenant_id, user_id, role, added_by) VALUES ($1, $2, 'owner', $2)`, tenantID, p.UserID); err != nil {
+			return RequestRecord{}, err
 		}
 		_ = audit(ctx, tx, p.UserEmail, "tenant.create", tenant, nil)
 	case err != nil:
 		return RequestRecord{}, err
-	case ownerID != p.UserID && !p.IsAdmin:
-		return RequestRecord{}, ErrForbidden
+	default:
+		role, err := memberRole(ctx, tx, tenantID, p.UserID)
+		if err != nil {
+			return RequestRecord{}, err
+		}
+		if role == "" && !p.IsAdmin {
+			return RequestRecord{}, ErrNotMember
+		}
 	}
 
 	payload, _ := json.Marshal(p.Req)
@@ -182,7 +192,8 @@ func (s *Store) ListRequests(ctx context.Context, userID, status string, limit i
 	args := []any{limit}
 	if userID != "" {
 		args = append(args, userID)
-		q += fmt.Sprintf(` AND r.requested_by = $%d`, len(args))
+		// Their own requests (even after leaving a team) and everything in teams they belong to.
+		q += fmt.Sprintf(` AND (r.requested_by = $%[1]d OR r.tenant_id IN (SELECT tenant_id FROM tenant_members WHERE user_id = $%[1]d))`, len(args))
 	}
 	if status != "" {
 		args = append(args, status)
@@ -326,8 +337,8 @@ func (s *Store) DecideRequest(ctx context.Context, id string, d Decision) (Reque
 	}
 	defer tx.Rollback(ctx)
 
-	var status, requester string
-	if err := tx.QueryRow(ctx, `SELECT status, requested_by::text FROM requests WHERE id = $1 FOR UPDATE`, id).Scan(&status, &requester); err != nil {
+	var status, requester, tenantID string
+	if err := tx.QueryRow(ctx, `SELECT status, requested_by::text, tenant_id::text FROM requests WHERE id = $1 FOR UPDATE`, id).Scan(&status, &requester, &tenantID); err != nil {
 		return RequestRecord{}, mapErr(err)
 	}
 	if status != StatusAwaiting {
@@ -350,8 +361,15 @@ func (s *Store) DecideRequest(ctx context.Context, id string, d Decision) (Reque
 		}
 		next = StatusRejected
 	case DecisionCancel:
+		// The requester, an owner of the team, or an administrator.
 		if !d.ActorAdmin && requester != d.ActorID {
-			return RequestRecord{}, ErrForbidden
+			role, err := memberRole(ctx, tx, tenantID, d.ActorID)
+			if err != nil {
+				return RequestRecord{}, err
+			}
+			if role != RoleOwner {
+				return RequestRecord{}, ErrForbidden
+			}
 		}
 		next = StatusCancelled
 	default:

@@ -117,3 +117,23 @@ export interface QuotaTier {
   requests: { cpu: string; memory: string }
   limits: { cpu: string; memory: string }
 }
+
+export type TeamRole = 'owner' | 'member'
+
+export interface TeamMember {
+  user_id: string
+  email: string
+  role: TeamRole
+  added_by?: string
+  added_at: string
+}
+
+export interface Team {
+  name: string
+  /** The viewer's role. Empty for an administrator who is not in the team. */
+  role: TeamRole | ''
+  member_count: number
+  members?: TeamMember[]
+  projects: string[]
+  created_at: string
+}

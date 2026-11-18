@@ -16,6 +16,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -996,4 +997,430 @@ func firstSucceeded(t *testing.T, e *env) string {
 		t.Fatal("no succeeded request to use")
 	}
 	return get(list[0], "id").(string)
+}
+
+// ---- team members ------------------------------------------------------------------------------
+
+func TestTeams(t *testing.T) {
+	e := newEnv(t)
+	admin2 := e.token("admin2", "plinth-admins")
+	alice, bob, carol, dave := e.alice(), e.bob(), e.token("carol", "devs"), e.token("dave", "devs")
+
+	mk := func(kind, driver, name string, cfg map[string]string) {
+		e.expect(201, e.admin(), "POST", "/api/v1/integrations", map[string]any{"kind": kind, "driver": driver, "name": name, "config": cfg})
+	}
+	mk("gitsource", "fake", "git", map[string]string{"a": "b"})
+	mk("cluster", "fake", "cl", map[string]string{"name": "dev"})
+	for name, approval := range map[string]bool{"open": false, "sensitive": true} {
+		e.expect(201, e.admin(), "POST", "/api/v1/blueprints", map[string]any{
+			"name": name, "git_source": "git", "requires_approval": approval,
+			"environments": []map[string]any{{"name": "dev", "cluster": "cl"}},
+		})
+	}
+
+	// Everyone signs in once, so they exist and can be added by e-mail.
+	ids := map[string]string{}
+	for name, tok := range map[string]string{"alice": alice, "bob": bob, "carol": carol, "dave": dave} {
+		v, _ := e.expect(200, tok, "GET", "/api/v1/me", nil)
+		ids[name] = get(v, "id").(string)
+	}
+
+	submit := func(tok, bp, tenant, project string) (int, map[string]any, string) {
+		code, v, raw := e.call(tok, "POST", "/api/v1/requests",
+			fmt.Sprintf(`{"blueprint":%q,"tenant":%q,"projects":[{"name":%q}]}`, bp, tenant, project))
+		m, _ := v.(map[string]any)
+		return code, m, raw
+	}
+	idOf := func(m map[string]any) string { return m["id"].(string) }
+	members := func(tok, team string) map[string]string { // email -> role
+		v, _ := e.expect(200, tok, "GET", "/api/v1/tenants/"+team, nil)
+		out := map[string]string{}
+		for _, m := range get(v, "members").([]any) {
+			out[get(m, "email").(string)] = get(m, "role").(string)
+		}
+		return out
+	}
+	add := func(tok, team, email, role string) (int, string) {
+		code, _, raw := e.call(tok, "POST", "/api/v1/tenants/"+team+"/members", map[string]string{"email": email, "role": role})
+		return code, raw
+	}
+	setRole := func(tok, team, uid, role string) (int, string) {
+		code, _, raw := e.call(tok, "PUT", "/api/v1/tenants/"+team+"/members/"+uid, map[string]string{"role": role})
+		return code, raw
+	}
+	remove := func(tok, team, uid string) (int, string) {
+		code, _, raw := e.call(tok, "DELETE", "/api/v1/tenants/"+team+"/members/"+uid, nil)
+		return code, raw
+	}
+	listIDs := func(tok string) map[string]bool {
+		v, _ := e.expect(200, tok, "GET", "/api/v1/requests", nil)
+		out := map[string]bool{}
+		for _, r := range v.([]any) {
+			out[get(r, "id").(string)] = true
+		}
+		return out
+	}
+
+	t.Run("the first request creates the team and makes you its owner", func(t *testing.T) {
+		code, m, _ := submit(alice, "open", "team-t", "app")
+		if code != 202 {
+			t.Fatalf("submit: %d", code)
+		}
+		e.waitStatus(alice, idOf(m), "succeeded")
+
+		v, _ := e.expect(200, alice, "GET", "/api/v1/tenants", nil)
+		list := v.([]any)
+		if len(list) != 1 || get(list[0], "name") != "team-t" || get(list[0], "role") != "owner" || get(list[0], "member_count") != float64(1) {
+			t.Fatalf("alice's teams: %v", list)
+		}
+		if got := members(alice, "team-t"); len(got) != 1 || got["alice@example.test"] != "owner" {
+			t.Fatalf("members: %v", got)
+		}
+		if p := get(list[0], "projects").([]any); len(p) != 1 || p[0] != "app" {
+			t.Errorf("projects: %v", p)
+		}
+	})
+
+	t.Run("outsiders cannot see the team, join in, or learn anything about it", func(t *testing.T) {
+		v, _ := e.expect(200, bob, "GET", "/api/v1/tenants", nil)
+		if len(v.([]any)) != 0 {
+			t.Errorf("bob sees teams he is not in: %v", v)
+		}
+		e.expect(404, bob, "GET", "/api/v1/tenants/team-t", nil)
+		e.expect(404, bob, "GET", "/api/v1/tenants/no-such-team", nil) // same answer as for a team he cannot see
+		code, _, raw := submit(bob, "open", "team-t", "sneaky")
+		if code != 403 || !strings.Contains(raw, "not a member of this team") || !strings.Contains(raw, "ask one of its owners") {
+			t.Errorf("an outsider requesting for the team: %d %s", code, raw)
+		}
+		if code, _ := add(bob, "team-t", "bob@example.test", "owner"); code != 404 {
+			t.Errorf("an outsider adding themselves: %d", code)
+		}
+		// Administrators see every team, but not as members.
+		v, _ = e.expect(200, e.admin(), "GET", "/api/v1/tenants?all=true", nil)
+		if len(v.([]any)) != 1 || get(v.([]any)[0], "role") != "" {
+			t.Errorf("admin view: %v", v)
+		}
+		e.expect(200, e.admin(), "GET", "/api/v1/tenants/team-t", nil)
+		// ?all=true is ignored for everyone else.
+		v, _ = e.expect(200, bob, "GET", "/api/v1/tenants?all=true", nil)
+		if len(v.([]any)) != 0 {
+			t.Error("a user must not be able to list every team")
+		}
+	})
+
+	t.Run("owners add people by e-mail address", func(t *testing.T) {
+		code, raw := add(alice, "team-t", "BOB@Example.Test", "member") // case does not matter
+		if code != 201 || !strings.Contains(raw, `"role":"member"`) {
+			t.Fatalf("add: %d %s", code, raw)
+		}
+		if code, _ := add(alice, "team-t", "bob@example.test", "member"); code != 409 {
+			t.Errorf("adding twice: %d", code)
+		}
+		code, raw = add(alice, "team-t", "nobody@example.test", "member")
+		if code != 404 || !strings.Contains(raw, "signed in to Plinth yet") {
+			t.Errorf("a person who never signed in: %d %s", code, raw)
+		}
+		if code, _ := add(alice, "team-t", "not-an-address", "member"); code != 400 {
+			t.Errorf("bad address: %d", code)
+		}
+		if code, _ := add(alice, "team-t", "carol@example.test", "admin"); code != 400 {
+			t.Errorf("unknown role: %d", code)
+		}
+		if code, _, _ := e.call(alice, "POST", "/api/v1/tenants/team-t/members", `{"email":"carol@example.test","role":"member","extra":1}`); code != 400 {
+			t.Errorf("unknown field: %d", code)
+		}
+		if got := members(bob, "team-t"); len(got) != 2 || got["bob@example.test"] != "member" {
+			t.Fatalf("bob should now see the team: %v", got)
+		}
+	})
+
+	t.Run("two accounts with the same address cannot be told apart", func(t *testing.T) {
+		twin := e.idp.Token(authtest.Claims{Sub: "twin-1", Email: "twin@example.test"})
+		twin2 := e.idp.Token(authtest.Claims{Sub: "twin-2", Email: "twin@example.test"})
+		e.expect(200, twin, "GET", "/api/v1/me", nil)
+		e.expect(200, twin2, "GET", "/api/v1/me", nil)
+		if code, raw := add(alice, "team-t", "twin@example.test", "member"); code != 409 || !strings.Contains(raw, "more than one account") {
+			t.Errorf("ambiguous e-mail: %d %s", code, raw)
+		}
+	})
+
+	var aliceReq, bobReq string
+	t.Run("members request projects together and see each other's requests", func(t *testing.T) {
+		_, m, _ := submit(bob, "open", "team-t", "web")
+		bobReq = idOf(m)
+		e.waitStatus(bob, bobReq, "succeeded")
+		_, m, _ = submit(alice, "open", "team-t", "api2")
+		aliceReq = idOf(m)
+		e.waitStatus(alice, aliceReq, "succeeded")
+
+		for who, tok := range map[string]string{"alice": alice, "bob": bob} {
+			got := listIDs(tok)
+			if !got[aliceReq] || !got[bobReq] {
+				t.Errorf("%s does not see the whole team's requests: %v", who, got)
+			}
+		}
+		e.expect(200, bob, "GET", "/api/v1/requests/"+aliceReq, nil)
+		e.expect(404, carol, "GET", "/api/v1/requests/"+aliceReq, nil)
+		if got := listIDs(carol); got[aliceReq] || got[bobReq] {
+			t.Error("an outsider sees the team's requests")
+		}
+		v, _ := e.expect(200, bob, "GET", "/api/v1/tenants/team-t", nil)
+		if p := get(v, "projects").([]any); len(p) != 3 {
+			t.Errorf("projects: %v", p)
+		}
+	})
+
+	t.Run("a teammate can retry a failed request; an outsider cannot", func(t *testing.T) {
+		world.mu.Lock()
+		world.failNS["team-t-flaky"] = true
+		world.mu.Unlock()
+		_, m, _ := submit(alice, "open", "team-t", "flaky")
+		id := idOf(m)
+		e.waitStatus(alice, id, "failed")
+
+		e.expect(404, carol, "POST", "/api/v1/requests/"+id+"/retry", nil)
+		world.mu.Lock()
+		world.failNS["team-t-flaky"] = false
+		world.mu.Unlock()
+		e.expect(202, bob, "POST", "/api/v1/requests/"+id+"/retry", nil)
+		e.waitStatus(alice, id, "succeeded")
+	})
+
+	t.Run("only owners manage the team", func(t *testing.T) {
+		if code, raw := add(bob, "team-t", "carol@example.test", "member"); code != 403 || !strings.Contains(raw, "only team owners") {
+			t.Errorf("a member adding: %d %s", code, raw)
+		}
+		if code, _ := setRole(bob, "team-t", ids["bob"], "owner"); code != 403 {
+			t.Errorf("a member promoting themselves: %d", code)
+		}
+		if code, _ := remove(bob, "team-t", ids["alice"]); code != 403 {
+			t.Errorf("a member removing the owner: %d", code)
+		}
+		if got := members(alice, "team-t"); got["alice@example.test"] != "owner" || got["bob@example.test"] != "member" {
+			t.Fatalf("refused changes must change nothing: %v", got)
+		}
+		// Administrators can manage any team.
+		if code, _ := add(e.admin(), "team-t", "dave@example.test", "member"); code != 201 {
+			t.Errorf("admin adding: %d", code)
+		}
+	})
+
+	t.Run("roles change, and a team always keeps an owner", func(t *testing.T) {
+		if code, _ := setRole(alice, "team-t", ids["bob"], "owner"); code != 200 {
+			t.Fatalf("promote: %d", code)
+		}
+		if code, _ := add(bob, "team-t", "carol@example.test", "member"); code != 201 { // bob can manage now
+			t.Errorf("a new owner adding: %d", code)
+		}
+		if code, _ := setRole(alice, "team-t", ids["bob"], "member"); code != 200 { // two owners: one may step down
+			t.Fatalf("demote with two owners: %d", code)
+		}
+		if code, _ := setRole(alice, "team-t", ids["bob"], "owner"); code != 200 {
+			t.Fatalf("promote again: %d", code)
+		}
+		if code, _ := setRole(alice, "team-t", ids["carol"], "member"); code != 200 { // no-op change is fine
+			t.Errorf("same role: %d", code)
+		}
+		if code, _ := setRole(alice, "team-t", "00000000-0000-0000-0000-000000000000", "owner"); code != 404 {
+			t.Errorf("unknown member: %d", code)
+		}
+		if code, _ := setRole(alice, "team-t", "not-a-uuid", "owner"); code != 404 {
+			t.Errorf("malformed id: %d", code)
+		}
+		if code, _ := remove(alice, "team-t", "not-a-uuid"); code != 404 {
+			t.Errorf("malformed id: %d", code)
+		}
+		if code, _ := setRole(alice, "team-t", ids["bob"], "boss"); code != 400 {
+			t.Errorf("unknown role: %d", code)
+		}
+
+		// Back to a single owner: nothing may remove or demote them.
+		e.expect(204, alice, "DELETE", "/api/v1/tenants/team-t/members/"+ids["bob"], nil)
+		for name, f := range map[string]func() (int, string){
+			"demote": func() (int, string) { return setRole(alice, "team-t", ids["alice"], "member") },
+			"remove": func() (int, string) { return remove(e.admin(), "team-t", ids["alice"]) },
+			"leave":  func() (int, string) { return remove(alice, "team-t", ids["alice"]) },
+		} {
+			if code, raw := f(); code != 409 || !strings.Contains(raw, "at least one owner") {
+				t.Errorf("last owner %s: %d %s", name, code, raw)
+			}
+		}
+	})
+
+	t.Run("two owners removing each other at once leaves one", func(t *testing.T) {
+		code, m, _ := submit(alice, "open", "team-race", "app")
+		if code != 202 {
+			t.Fatal(code)
+		}
+		e.waitStatus(alice, idOf(m), "succeeded")
+		add(alice, "team-race", "bob@example.test", "owner")
+
+		var wg sync.WaitGroup
+		codes := make([]int, 2)
+		wg.Add(2)
+		go func() { defer wg.Done(); codes[0], _ = remove(alice, "team-race", ids["bob"]) }()
+		go func() { defer wg.Done(); codes[1], _ = remove(bob, "team-race", ids["alice"]) }()
+		wg.Wait()
+
+		v, _ := e.expect(200, e.admin(), "GET", "/api/v1/tenants/team-race", nil)
+		owners := 0
+		for _, mm := range get(v, "members").([]any) {
+			if get(mm, "role") == "owner" {
+				owners++
+			}
+		}
+		if owners != 1 {
+			t.Fatalf("a team must end up with exactly one owner after the race, got %d (codes %v)", owners, codes)
+		}
+	})
+
+	t.Run("leaving ends access to the team but not to your own old requests", func(t *testing.T) {
+		world.mu.Lock()
+		world.failNS["team-t-broken"] = true
+		world.mu.Unlock()
+		_, m, _ := submit(alice, "open", "team-t", "broken")
+		broken := idOf(m)
+		e.waitStatus(alice, broken, "failed")
+
+		if code, _ := setRole(alice, "team-t", ids["carol"], "owner"); code != 200 { // so alice may leave
+			t.Fatalf("promote carol: %d", code)
+		}
+		e.expect(204, alice, "DELETE", "/api/v1/tenants/team-t/members/"+ids["alice"], nil) // leaving
+
+		e.expect(404, alice, "GET", "/api/v1/tenants/team-t", nil)
+		if code, _, raw := submit(alice, "open", "team-t", "again"); code != 403 || !strings.Contains(raw, "not a member") {
+			t.Errorf("a former member requesting: %d %s", code, raw)
+		}
+		// What she asked for stays visible to her, but she cannot act on it any more.
+		e.expect(200, alice, "GET", "/api/v1/requests/"+broken, nil)
+		if !listIDs(alice)[broken] {
+			t.Error("her own request disappeared from her list")
+		}
+		if code, _, raw := e.call(alice, "POST", "/api/v1/requests/"+broken+"/retry", nil); code != 403 || !strings.Contains(raw, "not a member") {
+			t.Errorf("retry by a former member: %d %s", code, raw)
+		}
+		if listIDs(alice)[bobReq] {
+			t.Error("a former member still sees the team's other requests")
+		}
+		// The remaining owner can retry it.
+		world.mu.Lock()
+		world.failNS["team-t-broken"] = false
+		world.mu.Unlock()
+		e.expect(202, carol, "POST", "/api/v1/requests/"+broken+"/retry", nil)
+		e.waitStatus(carol, broken, "succeeded")
+	})
+
+	t.Run("who may withdraw a waiting request, and who may approve it", func(t *testing.T) {
+		if code, _ := add(carol, "team-t", "bob@example.test", "member"); code != 201 { // bob is back, as a member
+			t.Fatalf("add bob back: %d", code)
+		}
+		wait := func(tok, project string) string {
+			code, m, raw := submit(tok, "sensitive", "team-t", project)
+			if code != 202 || m["status"] != "awaiting_approval" {
+				t.Fatalf("submit %s: %d %s", project, code, raw)
+			}
+			return idOf(m)
+		}
+		decide := func(tok, id, action string) int {
+			code, _, _ := e.call(tok, "POST", "/api/v1/requests/"+id+"/"+action, nil)
+			return code
+		}
+
+		r1 := wait(dave, "reg1")
+		if c := decide(alice, r1, "cancel"); c != 404 { // a former member
+			t.Errorf("former member withdrawing: %d", c)
+		}
+		if c := decide(bob, r1, "cancel"); c != 403 { // a plain member who is not the requester
+			t.Errorf("a teammate withdrawing someone else's request: %d", c)
+		}
+		if c := decide(carol, r1, "cancel"); c != 200 { // an owner
+			t.Errorf("an owner withdrawing: %d", c)
+		}
+		r2 := wait(dave, "reg2")
+		if c := decide(dave, r2, "cancel"); c != 200 { // the requester
+			t.Errorf("the requester withdrawing: %d", c)
+		}
+
+		// Approving is for administrators only: being a team owner is not enough.
+		r3 := wait(dave, "reg3")
+		if c := decide(carol, r3, "approve"); c != 403 {
+			t.Errorf("an owner approving: %d", c)
+		}
+		if c := decide(admin2, r3, "approve"); c != 200 {
+			t.Errorf("an administrator approving: %d", c)
+		}
+		e.waitStatus(dave, r3, "succeeded")
+	})
+
+	t.Run("every membership change is in the audit log", func(t *testing.T) {
+		v, raw := e.expect(200, e.admin(), "GET", "/api/v1/audit?limit=500", nil)
+		seen := map[string]bool{}
+		for _, ent := range v.([]any) {
+			seen[get(ent, "action").(string)] = true
+		}
+		for _, want := range []string{"tenant.create", "tenant.member.add", "tenant.member.role", "tenant.member.remove", "tenant.member.leave"} {
+			if !seen[want] {
+				t.Errorf("no %s entry in the audit log", want)
+			}
+		}
+		for _, want := range []string{"bob@example.test", "carol@example.test", `"role":"owner"`} {
+			if !strings.Contains(raw, want) {
+				t.Errorf("the audit log does not say %s", want)
+			}
+		}
+	})
+}
+
+// Teams that existed before members were introduced keep their owner.
+func TestTeamMembersMigrationKeepsExistingOwners(t *testing.T) {
+	url := startPostgres(t)
+	key, _ := crypto.GenerateKey()
+	box, _ := crypto.NewBox(key)
+	ctx := context.Background()
+	st, err := store.Open(ctx, url, box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	// Bring the schema to the state before this change, with a team in it.
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	if _, err := conn.Exec(ctx, `CREATE TABLE schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"0001_init.sql", "0002_approvals.sql"} {
+		sql, err := os.ReadFile("../store/migrations/" + f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := conn.Exec(ctx, string(sql)); err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		if _, err := conn.Exec(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var owner string
+	if err := conn.QueryRow(ctx, `INSERT INTO users (oidc_sub, email, role) VALUES ('old-owner', 'old@example.test', 'user') RETURNING id::text`).Scan(&owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `INSERT INTO tenants (name, owner_id) VALUES ('legacy-team', $1)`, owner); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.Migrate(ctx); err != nil { // applies 0003 on top of existing data
+		t.Fatal(err)
+	}
+	role, err := st.TenantRole(ctx, "legacy-team", owner)
+	if err != nil || role != store.RoleOwner {
+		t.Fatalf("the existing owner must stay an owner: role=%q err=%v", role, err)
+	}
+	tn, err := st.GetTenant(ctx, "legacy-team", owner)
+	if err != nil || len(tn.Members) != 1 || tn.Members[0].Email != "old@example.test" {
+		t.Fatalf("members after migration: %+v %v", tn.Members, err)
+	}
 }

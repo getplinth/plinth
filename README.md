@@ -6,7 +6,7 @@ databases, secret stores) and bundle them into **blueprints**. Developers fill
 in one form; Plinth provisions the repository, registry project, namespace
 (with RBAC, quota and network policy) and database, then reports status.
 
-> Status: the engine, API and web interface work and are tested end to end against real systems. Try the interface with `make demo` (see [docs/ui.md](docs/ui.md)). Not built yet: tenant members.
+> Status: the engine, API and web interface work and are tested end to end against real systems. Try the interface with `make demo` (see [docs/ui.md](docs/ui.md)). Not built yet: invitations for people who have not signed in yet, master key rotation.
 
 ## Concepts
 
@@ -14,6 +14,7 @@ in one form; Plinth provisions the repository, registry project, namespace
 - **Provider**: the driver behind an integration (`github`, `gitlab`, `harbor`, `postgres`, ...).
 - **Blueprint**: a versioned combination of integrations plus defaults and the request form schema.
 - **Request**: a developer's onboarding order; expands into idempotent, resumable steps.
+- **Team**: who may request for a name. Owners manage the people; members request together and see each other's requests.
 
 Plinth is product-neutral: GitHub or GitLab, any container registry, any Kubernetes distribution, Postgres or MySQL are all just drivers.
 

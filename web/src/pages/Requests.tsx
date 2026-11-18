@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { Banner, StackGlyph, StatusPill } from '../components'
 import { useLoad } from '../hooks'
@@ -13,18 +13,24 @@ const active = (list?: RequestRecord[]) => !!list?.some((r) => r.status === 'awa
 export function RequestsPage() {
   const me = useMe()
   const [everyone, setEveryone] = useState(false)
-  const { data, error, loading } = useLoad(
+  const [params, setParams] = useSearchParams()
+  const team = params.get('team') ?? ''
+  const { data: all, error, loading } = useLoad(
     (signal) => api<RequestRecord[]>(`/requests${everyone ? '?all=true' : ''}`, { signal }),
     [everyone],
     (list) => (active(list) ? 3000 : 0),
   )
+
+  const data = team ? all?.filter((r) => r.tenant === team) : all
 
   return (
     <>
       <div className="page-head">
         <div>
           <h1>Requests</h1>
-          <p className="sub">{everyone ? 'Every request on this platform.' : 'Projects you asked Plinth to set up.'}</p>
+          <p className="sub">
+            {team ? <>Requests of the team <b>{team}</b>. <button className="btn sm quiet" onClick={() => setParams({})}>Show all</button></> : everyone ? 'Every request on this platform.' : 'Your requests and those of your teams.'}
+          </p>
         </div>
         <div className="actions">
           {me.role === 'admin' && (
@@ -75,7 +81,7 @@ export function RequestsPage() {
                     </td>
                     <td data-label="Team and projects">
                       <Link className="title" to={`/requests/${r.id}`}>{r.tenant}</Link>
-                      <div className="sub">{listProjects(r.payload.projects.map((x) => x.name))}</div>
+                      <div className="sub">{listProjects(r.payload.projects.map((x) => x.name))}{r.requested_by !== me.email && !everyone ? ` · by ${r.requested_by}` : ''}</div>
                     </td>
                     <td data-label="Blueprint">{r.blueprint}</td>
                     <td data-label="Submitted">

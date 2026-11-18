@@ -6,7 +6,7 @@ import { useAction, useLoad } from '../hooks'
 import { fullTime, relativeTime } from '../lib/format'
 import { progress } from '../lib/steps'
 import { useMe } from '../session'
-import type { RequestRecord } from '../types'
+import type { RequestRecord, Team } from '../types'
 
 const active = (r?: RequestRecord) => r?.status === 'awaiting_approval' || r?.status === 'pending' || r?.status === 'running'
 
@@ -38,6 +38,9 @@ export function RequestPage() {
   }, [id, reload])
   const withdraw = useAction(withdrawFn)
   const me = useMe()
+  // Teammates may retry; owners may also withdraw. A missing team (not a member) just means no extra rights.
+  const team = useLoad(async (s) => (rec ? api<Team>(`/tenants/${rec.tenant}`, { signal: s }).catch(() => null) : null), [rec?.tenant])
+  const teamRole = team.data?.role ?? ''
 
   if (loading && !rec) return <p className="muted" role="status">Loading request…</p>
   if (error && !rec) {
@@ -70,10 +73,10 @@ export function RequestPage() {
         <div className="actions">
           <StatusPill status={rec.status} />
           {p.total > 0 && <span className="muted">{p.done} of {p.total} steps done</span>}
-          {rec.status === 'awaiting_approval' && (
+          {rec.status === 'awaiting_approval' && (me.role === 'admin' || teamRole === 'owner' || rec.requested_by === me.email) && (
             <ConfirmButton label="Withdraw request" confirmLabel="Confirm withdraw" disabled={withdraw.busy} onConfirm={() => void withdraw.run()} />
           )}
-          {rec.status === 'failed' && (
+          {rec.status === 'failed' && (me.role === 'admin' || teamRole !== '') && (
             <button className="btn primary" disabled={retry.busy} onClick={() => void retry.run()}>
               {retry.busy ? 'Retrying…' : 'Retry failed steps'}
             </button>

@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { RequestRecord } from './types'
+import { sentence } from './lib/format'
 import { buildSections, progress, statusLabel } from './lib/steps'
 
 /** The logo: three courses of stone. */
@@ -56,7 +57,7 @@ export function Banner({ kind = 'error', title, children }: { kind?: 'error' | '
 export function ErrorBanner({ message, details }: { message?: string; details?: string[] }) {
   if (!message) return null
   return (
-    <Banner title={details && details.length ? `${message}. Fix these and try again:` : message}>
+    <Banner title={details && details.length ? `${sentence(message)}. Fix these and try again:` : sentence(message)}>
       {details && details.length > 0 && (
         <ul>
           {details.map((d) => (

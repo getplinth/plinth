@@ -18,6 +18,11 @@ export function fullTime(iso: string): string {
   return Number.isNaN(t) ? '' : new Date(t).toLocaleString()
 }
 
+/** Server messages are plain lowercase sentences; start them with a capital for display. */
+export function sentence(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s
+}
+
 /** "shop", "shop and blog", "shop, blog and 2 more" */
 export function listProjects(names: string[], max = 2): string {
   if (names.length === 0) return 'no projects'

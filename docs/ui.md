@@ -8,7 +8,11 @@ A single-page app (React, TypeScript, Vite) compiled into the Plinth binary, so 
 make demo        # builds the UI, starts PostgreSQL in Docker, runs Plinth with simulated systems
 ```
 
-Open <http://127.0.0.1:8080> and sign in as **Alice** or **Bob** (developers) or **Root** (administrator). The demo uses a stand-in identity provider with no passwords, simulated Git/registry/cluster/database drivers, and binds only to `127.0.0.1`. It talks to no real system. A team name containing `fail` fails once per project so the Retry flow can be tried.
+Open <http://127.0.0.1:8080> and sign in as **Alice** or **Bob** (developers) or **Root** or **Ada** (administrators). The demo uses a stand-in identity provider with no passwords, simulated Git/registry/cluster/database drivers, and binds only to `127.0.0.1`. It talks to no real system. A team name containing `fail` fails once per project so the Retry flow can be tried.
+
+Things to try:
+- **Approval.** The `regulated` blueprint needs approval: ask for a project as Alice, then approve it as Root. Root cannot approve Root's own request; Ada can.
+- **Teams.** As Alice, request a project for a new team, add `bob@example.test` on the team page, then sign in as Bob and open Requests: the team's requests are there, and Bob can request for the team too. Someone who has never signed in cannot be added yet.
 
 For UI development run `make demo` in one terminal and `cd web && npm run dev` in another (the dev server proxies `/api` to the demo).
 
@@ -16,7 +20,8 @@ For UI development run `make demo` in one terminal and `cd web && npm run dev` i
 
 | Page | Who | Purpose |
 |---|---|---|
-| Requests | everyone | your requests with progress and status; admins can switch to everyone's |
+| Requests | everyone | your requests and your teams' with progress and status; filter by team; admins can switch to everyone's |
+| Teams | everyone | the teams you belong to (administrators can show every team); a team page lists its people and projects, and lets owners add people by e-mail, change roles, remove people, with **Leave team** for yourself |
 | Request detail | owner, admins | every step as a course of stone, live while it runs; the reason for a failure; **Retry failed steps** |
 | New request | everyone | choose a blueprint (the form says when one needs approval), name the team, add projects; shows the exact names that will be created before you submit |
 | Approvals | admins | requests waiting for a decision, what each would create, with Approve and Reject (a reason is required to reject); the navigation shows how many wait for you |

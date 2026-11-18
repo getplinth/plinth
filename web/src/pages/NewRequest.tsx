@@ -6,13 +6,14 @@ import { useAction, useLoad } from '../hooks'
 import { databaseTitle } from '../lib/drivers'
 import { emptyProject, hasErrors, toPayload, validate, type FormErrors, type NewRequestForm, type ProjectForm } from '../lib/form'
 import { namespaceOf, normalize } from '../lib/naming'
-import type { BlueprintSummary, QuotaTier, RequestRecord } from '../types'
+import type { BlueprintSummary, QuotaTier, RequestRecord, Team } from '../types'
 
 const tierSummary = (t: QuotaTier) => `${t.pods} pods, ${t.requests.cpu} CPU, ${t.requests.memory} memory`
 
 export function NewRequestPage() {
   const navigate = useNavigate()
   const blueprints = useLoad((signal) => api<BlueprintSummary[]>('/blueprints', { signal }), [])
+  const teams = useLoad((signal) => api<Team[]>('/tenants', { signal }), [])
   const tiers = useLoad((signal) => api<Record<string, QuotaTier>>('/quota-tiers', { signal }), [])
 
   const [form, setForm] = useState<NewRequestForm>({ blueprint: '', tenant: '', projects: [emptyProject()] })
@@ -27,6 +28,7 @@ export function NewRequestPage() {
   const bp = blueprints.data?.find((b) => b.name === form.blueprint)
   const tierNames = useMemo(() => Object.keys(tiers.data ?? {}).sort((a, b) => (tiers.data![a]!.pods - tiers.data![b]!.pods)), [tiers.data])
   const errors = validate(form)
+  const myTeam = teams.data?.find((t) => t.name === normalize(form.tenant))
   const shown: FormErrors = submitted ? errors : { projects: form.projects.map(() => ({})) }
 
   const send = useCallback(async () => {
@@ -88,8 +90,9 @@ export function NewRequestPage() {
                 ))}
               </select>
             </Field>
-            <Field id="tenant" label="Team name" error={shown.tenant} hint="Lowercase letters, numbers and dashes. The first request for a team makes you its owner.">
-              <input id="tenant" type="text" autoComplete="off" value={form.tenant} onChange={(e) => setForm({ ...form, tenant: e.target.value })} placeholder="payments" {...describe('tenant', shown.tenant, 'x')} />
+            <Field id="tenant" label="Team name" error={shown.tenant} hint={myTeam ? `You are in this team (${myTeam.role}). The project is added to it.` : 'Lowercase letters, numbers and dashes. A new name creates the team and makes you its owner.'}>
+              <input id="tenant" type="text" list="my-teams" autoComplete="off" value={form.tenant} onChange={(e) => setForm({ ...form, tenant: e.target.value })} placeholder="payments" {...describe('tenant', shown.tenant, 'x')} />
+              <datalist id="my-teams">{teams.data?.map((t) => <option key={t.name} value={t.name} />)}</datalist>
             </Field>
           </div>
         </div>

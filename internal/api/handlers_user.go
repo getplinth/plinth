@@ -315,7 +315,12 @@ func (s *Server) decide(action string) handlerFunc {
 			s.storeError(w, err)
 			return
 		}
-		if !visible(c, rec) {
+		acc, err := s.accessTo(r, c, rec)
+		if err != nil {
+			s.storeError(w, err)
+			return
+		}
+		if !acc.view {
 			writeErr(w, http.StatusNotFound, "not found")
 			return
 		}
@@ -330,8 +335,23 @@ func (s *Server) decide(action string) handlerFunc {
 	}
 }
 
-// visible reports whether the caller may see or act on a request.
-func visible(c caller, rec store.RequestRecord) bool { return c.isAdmin() || rec.UserID == c.ID }
+// requestAccess is what a caller may do with a request:
+//   - view: administrators, members of its team, and whoever requested it
+//     (even after leaving the team);
+//   - retry: administrators and members of its team.
+type requestAccess struct{ view, retry bool }
+
+func (s *Server) accessTo(r *http.Request, c caller, rec store.RequestRecord) (requestAccess, error) {
+	if c.isAdmin() {
+		return requestAccess{view: true, retry: true}, nil
+	}
+	role, err := s.d.Store.TenantRole(r.Context(), rec.Tenant, c.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return requestAccess{}, err
+	}
+	member := role != ""
+	return requestAccess{view: member || rec.UserID == c.ID, retry: member}, nil
+}
 
 func (s *Server) listRequests(w http.ResponseWriter, r *http.Request, c caller) {
 	uid := c.ID
@@ -362,7 +382,12 @@ func (s *Server) getRequest(w http.ResponseWriter, r *http.Request, c caller) {
 		s.storeError(w, err)
 		return
 	}
-	if !visible(c, rec) { // do not reveal that other people's requests exist
+	acc, err := s.accessTo(r, c, rec)
+	if err != nil {
+		s.storeError(w, err)
+		return
+	}
+	if !acc.view { // do not reveal that other teams' requests exist
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
@@ -380,8 +405,17 @@ func (s *Server) retryRequest(w http.ResponseWriter, r *http.Request, c caller) 
 		s.storeError(w, err)
 		return
 	}
-	if !visible(c, rec) {
+	acc, err := s.accessTo(r, c, rec)
+	if err != nil {
+		s.storeError(w, err)
+		return
+	}
+	if !acc.view {
 		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	if !acc.retry { // saw it as its requester but is no longer in the team
+		s.storeError(w, store.ErrNotMember)
 		return
 	}
 	if err := s.d.Store.RetryRequest(r.Context(), rec.ID, c.Email); err != nil {

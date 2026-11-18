@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { databaseOf, isDnsLabel, isHostname, namespaceOf, normalize, stripScheme } from './naming'
 import { emptyProject, hasErrors, toPayload, validate, type NewRequestForm } from './form'
 import { buildSections, describeStep, orderedKeys, progress, statusLabel } from './steps'
-import { listProjects, relativeTime } from './format'
+import { listProjects, relativeTime, sentence } from './format'
 import type { RequestRecord } from '../types'
 
 describe('naming matches the Go implementation (same vectors as internal/naming)', () => {
@@ -211,5 +211,13 @@ describe('steps for requests that need approval', () => {
     expect(statusLabel.awaiting_approval).toBe('Needs approval')
     expect(statusLabel.rejected).toBe('Rejected')
     expect(statusLabel.cancelled).toBe('Withdrawn')
+  })
+})
+
+describe('sentence', () => {
+  it('capitalises server messages for display', () => {
+    expect(sentence('nobody with that e-mail has signed in')).toBe('Nobody with that e-mail has signed in')
+    expect(sentence('Already capitalised')).toBe('Already capitalised')
+    expect(sentence('')).toBe('')
   })
 })

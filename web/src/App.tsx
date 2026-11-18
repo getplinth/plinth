@@ -8,6 +8,8 @@ import { IntegrationsPage } from './pages/Integrations'
 import { NewRequestPage } from './pages/NewRequest'
 import { RequestPage } from './pages/RequestDetail'
 import { RequestsPage } from './pages/Requests'
+import { TeamPage } from './pages/Team'
+import { TeamsPage } from './pages/Teams'
 import { Session, useMe } from './session'
 import { startLogin } from './auth'
 
@@ -54,6 +56,8 @@ export function App() {
         <Route element={<Layout />}>
           <Route index element={<RequestsPage />} />
           <Route path="new" element={<NewRequestPage />} />
+          <Route path="teams" element={<TeamsPage />} />
+          <Route path="teams/:name" element={<TeamPage />} />
           <Route path="requests/:id" element={<RequestPage />} />
           <Route path="requests" element={<Navigate to="/" replace />} />
           <Route path="admin/approvals" element={<AdminOnly><ApprovalsPage /></AdminOnly>} />
