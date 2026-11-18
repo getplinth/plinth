@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/getplinth/plinth/internal/onboarding"
 	"github.com/getplinth/plinth/internal/request"
@@ -16,15 +17,16 @@ import (
 // blueprintSummary is what ordinary users see: enough to choose a blueprint,
 // without naming the underlying systems.
 type blueprintSummary struct {
-	Name          string   `json:"name"`
-	Environments  []string `json:"environments"`
-	HasDatabase   bool     `json:"has_database"`
-	DatabaseTypes []string `json:"database_types"`
-	HasRegistry   bool     `json:"has_registry"`
+	Name             string   `json:"name"`
+	Environments     []string `json:"environments"`
+	HasDatabase      bool     `json:"has_database"`
+	DatabaseTypes    []string `json:"database_types"`
+	HasRegistry      bool     `json:"has_registry"`
+	RequiresApproval bool     `json:"requires_approval"`
 }
 
 func summarize(b store.Blueprint, dbTypes []string) blueprintSummary {
-	s := blueprintSummary{Name: b.Name, HasRegistry: b.Registry != "", Environments: []string{}, DatabaseTypes: dbTypes}
+	s := blueprintSummary{Name: b.Name, HasRegistry: b.Registry != "", Environments: []string{}, DatabaseTypes: dbTypes, RequiresApproval: b.RequiresApproval}
 	if s.DatabaseTypes == nil {
 		s.DatabaseTypes = []string{}
 	}
@@ -278,6 +280,56 @@ func (s *Server) submitRequest(w http.ResponseWriter, r *http.Request, c caller)
 	writeJSON(w, http.StatusAccepted, s.withPlans(r, rec)[0])
 }
 
+var validStatus = map[string]bool{
+	store.StatusAwaiting: true, store.StatusPending: true, store.StatusRunning: true,
+	store.StatusSucceeded: true, store.StatusFailed: true, store.StatusRejected: true, store.StatusCancelled: true,
+}
+
+// decisionBody is the optional note that goes with an approval decision.
+type decisionBody struct {
+	Note string `json:"note"`
+}
+
+const maxNote = 500
+
+// decide handles approve, reject and cancel of a request awaiting approval.
+// Approve and reject are registered as administrator-only routes; cancel is
+// for the requester or an administrator, and other people's requests are 404.
+func (s *Server) decide(action string) handlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, c caller) {
+		var b decisionBody
+		if r.ContentLength != 0 && !readJSON(w, r, &b) {
+			return // readJSON has already answered
+		}
+		note := strings.TrimSpace(b.Note)
+		switch {
+		case len(note) > maxNote:
+			writeErr(w, http.StatusBadRequest, "the note is too long (500 characters at most)")
+			return
+		case action == store.DecisionReject && len(note) < 3:
+			writeErr(w, http.StatusBadRequest, "give a reason for rejecting, so the requester knows what to change")
+			return
+		}
+		rec, err := s.d.Store.GetRequest(r.Context(), r.PathValue("id"))
+		if err != nil {
+			s.storeError(w, err)
+			return
+		}
+		if !visible(c, rec) {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		out, err := s.d.Store.DecideRequest(r.Context(), rec.ID, store.Decision{
+			Action: action, ActorID: c.ID, ActorEmail: c.Email, ActorAdmin: c.isAdmin(), Note: note,
+		})
+		if err != nil {
+			s.storeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, s.withPlans(r, out)[0])
+	}
+}
+
 // visible reports whether the caller may see or act on a request.
 func visible(c caller, rec store.RequestRecord) bool { return c.isAdmin() || rec.UserID == c.ID }
 
@@ -287,7 +339,12 @@ func (s *Server) listRequests(w http.ResponseWriter, r *http.Request, c caller) 
 		uid = ""
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	list, err := s.d.Store.ListRequests(r.Context(), uid, limit)
+	status := r.URL.Query().Get("status")
+	if status != "" && !validStatus[status] {
+		writeErr(w, http.StatusBadRequest, "unknown status")
+		return
+	}
+	list, err := s.d.Store.ListRequests(r.Context(), uid, status, limit)
 	if err != nil {
 		s.storeError(w, err)
 		return

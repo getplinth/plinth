@@ -18,7 +18,8 @@ For UI development run `make demo` in one terminal and `cd web && npm run dev` i
 |---|---|---|
 | Requests | everyone | your requests with progress and status; admins can switch to everyone's |
 | Request detail | owner, admins | every step as a course of stone, live while it runs; the reason for a failure; **Retry failed steps** |
-| New request | everyone | choose a blueprint, name the team, add projects; shows the exact names that will be created before you submit |
+| New request | everyone | choose a blueprint (the form says when one needs approval), name the team, add projects; shows the exact names that will be created before you submit |
+| Approvals | admins | requests waiting for a decision, what each would create, with Approve and Reject (a reason is required to reject); the navigation shows how many wait for you |
 | Integrations | admins | add, check, replace and delete connections to Git, registry, clusters and databases |
 | Blueprints | admins | combine integrations into what developers can request |
 | Audit log | admins | who changed what |

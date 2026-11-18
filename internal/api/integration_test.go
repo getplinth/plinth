@@ -724,3 +724,276 @@ func TestApplication(t *testing.T) {
 		}
 	})
 }
+
+// ---- approvals ------------------------------------------------------------------------------
+
+func TestApprovals(t *testing.T) {
+	e := newEnv(t)
+	admin2 := e.token("admin2", "plinth-admins")
+
+	mk := func(kind, driver, name string, cfg map[string]string) {
+		e.expect(201, e.admin(), "POST", "/api/v1/integrations",
+			map[string]any{"kind": kind, "driver": driver, "name": name, "config": cfg})
+	}
+	mk("gitsource", "fake", "git", map[string]string{"a": "b"})
+	mk("registry", "fake", "reg", map[string]string{"a": "b"})
+	mk("cluster", "fake", "cl-dev", map[string]string{"name": "dev"})
+	mk("database", "postgres", "db", map[string]string{"a": "b"})
+	blueprint := func(name string, approval bool) {
+		e.expect(201, e.admin(), "POST", "/api/v1/blueprints", map[string]any{
+			"name": name, "git_source": "git", "registry": "reg", "requires_approval": approval,
+			"environments": []map[string]any{{"name": "dev", "cluster": "cl-dev", "database": "db"}},
+		})
+	}
+	blueprint("open", false)
+	blueprint("sensitive", true)
+
+	submit := func(token, bp, tenant, project string) (int, map[string]any) {
+		code, v, _ := e.call(token, "POST", "/api/v1/requests",
+			fmt.Sprintf(`{"blueprint":%q,"tenant":%q,"projects":[{"name":%q}]}`, bp, tenant, project))
+		m, _ := v.(map[string]any)
+		return code, m
+	}
+	idOf := func(m map[string]any) string { return m["id"].(string) }
+	decide := func(token, id, action, note string) (int, string) {
+		var body any
+		if note != "" {
+			body = map[string]string{"note": note}
+		}
+		code, _, raw := e.call(token, "POST", "/api/v1/requests/"+id+"/"+action, body)
+		return code, raw
+	}
+	status := func(token, id string) string {
+		v, _ := e.expect(200, token, "GET", "/api/v1/requests/"+id, nil)
+		return get(v, "status").(string)
+	}
+
+	t.Run("users can see which blueprints need approval", func(t *testing.T) {
+		v, _ := e.expect(200, e.alice(), "GET", "/api/v1/blueprints", nil)
+		got := map[string]bool{}
+		for _, b := range v.([]any) {
+			got[get(b, "name").(string)] = get(b, "requires_approval") == true
+		}
+		if got["open"] || !got["sensitive"] {
+			t.Fatalf("requires_approval flags: %v", got)
+		}
+	})
+
+	t.Run("a blueprint without approval runs straight away", func(t *testing.T) {
+		code, m := submit(e.alice(), "open", "team-o", "app")
+		if code != 202 || m["status"] == "awaiting_approval" {
+			t.Fatalf("%d %v", code, m["status"])
+		}
+		e.waitStatus(e.alice(), idOf(m), "succeeded")
+	})
+
+	var held string
+	t.Run("a sensitive request waits and nothing is provisioned", func(t *testing.T) {
+		code, m := submit(e.alice(), "sensitive", "team-s", "app")
+		if code != 202 || m["status"] != "awaiting_approval" {
+			t.Fatalf("%d %v", code, m["status"])
+		}
+		held = idOf(m)
+		time.Sleep(800 * time.Millisecond) // many worker polls
+		if status(e.alice(), held) != "awaiting_approval" {
+			t.Fatal("the worker must not run an unapproved request")
+		}
+		if world.count("group/team-s") != 0 || world.count("repo/team-s/app") != 0 {
+			t.Fatalf("systems were contacted before approval: %v", world.calls)
+		}
+		v, _ := e.expect(200, e.alice(), "GET", "/api/v1/requests/"+held, nil)
+		if len(get(v, "state", "steps").(map[string]any)) != 0 {
+			t.Fatal("no step may have started")
+		}
+		e.expect(409, e.alice(), "POST", "/api/v1/requests/"+held+"/retry", nil) // not failed
+	})
+
+	t.Run("only administrators approve, and never their own request", func(t *testing.T) {
+		e.expect(401, "", "POST", "/api/v1/requests/"+held+"/approve", nil)
+		if code, _ := decide(e.alice(), held, "approve", ""); code != 403 { // the requester
+			t.Errorf("requester approving: %d", code)
+		}
+		if code, _ := decide(e.bob(), held, "approve", ""); code != 403 {
+			t.Errorf("another user approving: %d", code)
+		}
+		if code, _ := decide(e.bob(), held, "reject", "nope nope"); code != 403 {
+			t.Errorf("a user rejecting: %d", code)
+		}
+		if status(e.alice(), held) != "awaiting_approval" {
+			t.Fatal("refused decisions must change nothing")
+		}
+
+		// An administrator's own request needs a different administrator.
+		code, m := submit(e.admin(), "sensitive", "team-self", "app")
+		if code != 202 || m["status"] != "awaiting_approval" {
+			t.Fatalf("admin submit: %d %v", code, m["status"])
+		}
+		self := idOf(m)
+		code, raw := decide(e.admin(), self, "approve", "")
+		if code != 403 || !strings.Contains(raw, "cannot approve your own") {
+			t.Fatalf("self approval: %d %s", code, raw)
+		}
+		if code, _ := decide(admin2, self, "approve", "second pair of eyes"); code != 200 {
+			t.Fatalf("another admin approving: %d", code)
+		}
+		e.waitStatus(e.admin(), self, "succeeded")
+	})
+
+	t.Run("approving releases the request to the queue and records who and why", func(t *testing.T) {
+		code, raw := decide(e.admin(), held, "approve", "checked with finance")
+		if code != 200 {
+			t.Fatalf("approve: %d %s", code, raw)
+		}
+		done := e.waitStatus(e.alice(), held, "succeeded")
+		if done["decided_by"] != "admin@example.test" || done["decision_note"] != "checked with finance" || done["decided_at"] == nil {
+			t.Fatalf("decision not recorded: %v %v %v", done["decided_by"], done["decision_note"], done["decided_at"])
+		}
+		if code, _ := decide(admin2, held, "approve", ""); code != 409 {
+			t.Errorf("a decided request cannot be decided again: %d", code)
+		}
+		if code, _ := decide(e.admin(), held, "reject", "too late now"); code != 409 {
+			t.Errorf("reject after approval: %d", code)
+		}
+	})
+
+	t.Run("two simultaneous approvals: exactly one wins", func(t *testing.T) {
+		_, m := submit(e.alice(), "sensitive", "team-race", "app")
+		id := idOf(m)
+		var wg sync.WaitGroup
+		codes := make([]int, 2)
+		for i, tok := range []string{e.admin(), admin2} {
+			wg.Add(1)
+			go func(i int, tok string) {
+				defer wg.Done()
+				codes[i], _ = decide(tok, id, "approve", "")
+			}(i, tok)
+		}
+		wg.Wait()
+		if !(codes[0] == 200 && codes[1] == 409 || codes[0] == 409 && codes[1] == 200) {
+			t.Fatalf("expected one 200 and one 409, got %v", codes)
+		}
+		e.waitStatus(e.alice(), id, "succeeded")
+		if world.count("repo/team-race/app") != 1 {
+			t.Errorf("provisioned %d times", world.count("repo/team-race/app"))
+		}
+	})
+
+	t.Run("rejecting needs a reason, ends the request and frees the names", func(t *testing.T) {
+		_, m := submit(e.alice(), "sensitive", "sens-x", "p")
+		id := idOf(m)
+
+		// While it waits, its names are reserved against other tenants.
+		if code, _ := submit(e.bob(), "sensitive", "sens", "x-p"); code != 409 {
+			t.Fatalf("the colliding name must be held while the request waits: %d", code)
+		}
+		if code, _ := decide(e.admin(), id, "reject", ""); code != 400 {
+			t.Errorf("reject without a reason: %d", code)
+		}
+		if code, _ := decide(e.admin(), id, "reject", "no"); code != 400 {
+			t.Errorf("reject with a one-word reason: %d", code)
+		}
+		if code, _ := decide(e.admin(), id, "reject", strings.Repeat("x", 600)); code != 400 {
+			t.Errorf("a note over 500 characters: %d", code)
+		}
+		if status(e.alice(), id) != "awaiting_approval" {
+			t.Fatal("invalid decisions must change nothing")
+		}
+
+		if code, _ := decide(e.admin(), id, "reject", "Use the shared database instead."); code != 200 {
+			t.Fatalf("reject: %d", code)
+		}
+		v, _ := e.expect(200, e.alice(), "GET", "/api/v1/requests/"+id, nil)
+		if get(v, "status") != "rejected" || get(v, "decision_note") != "Use the shared database instead." {
+			t.Fatalf("the requester must see the verdict and the reason: %v", v)
+		}
+		time.Sleep(300 * time.Millisecond)
+		if world.count("group/sens-x") != 0 {
+			t.Fatal("a rejected request must never run")
+		}
+		e.expect(409, e.alice(), "POST", "/api/v1/requests/"+id+"/retry", nil)
+
+		// The reservation is gone: the other tenant can have the name now.
+		if code, _ := submit(e.bob(), "sensitive", "sens", "x-p"); code != 202 {
+			t.Fatalf("the name must be free after a rejection: %d", code)
+		}
+	})
+
+	t.Run("requesters can withdraw while it waits; nobody else's business", func(t *testing.T) {
+		_, m := submit(e.alice(), "sensitive", "team-c", "app")
+		id := idOf(m)
+		if code, _ := decide(e.bob(), id, "cancel", ""); code != 404 {
+			t.Errorf("another user cancelling: %d", code)
+		}
+		if code, _ := decide(e.alice(), id, "cancel", ""); code != 200 {
+			t.Fatalf("withdrawing: %d", code)
+		}
+		if status(e.alice(), id) != "cancelled" {
+			t.Fatal("not cancelled")
+		}
+		if code, _ := decide(e.alice(), id, "cancel", ""); code != 409 {
+			t.Errorf("cancelling twice: %d", code)
+		}
+		if code, _ := decide(e.admin(), id, "approve", ""); code != 409 {
+			t.Errorf("approving a withdrawn request: %d", code)
+		}
+		// An administrator can also close someone's waiting request.
+		_, m2 := submit(e.alice(), "sensitive", "team-c2", "app")
+		if code, _ := decide(e.admin(), idOf(m2), "cancel", "duplicate of another request"); code != 200 {
+			t.Errorf("admin cancelling: %d", code)
+		}
+		// A finished request cannot be cancelled.
+		if code, _ := decide(e.alice(), firstSucceeded(t, e), "cancel", ""); code != 409 {
+			t.Errorf("cancelling a finished request: %d", code)
+		}
+	})
+
+	t.Run("administrators can list what is waiting", func(t *testing.T) {
+		_, m := submit(e.alice(), "sensitive", "team-q", "app")
+		v, _ := e.expect(200, e.admin(), "GET", "/api/v1/requests?all=true&status=awaiting_approval", nil)
+		found := false
+		for _, r := range v.([]any) {
+			if get(r, "status") != "awaiting_approval" {
+				t.Fatalf("filter let through %v", get(r, "status"))
+			}
+			found = found || get(r, "id") == idOf(m)
+		}
+		if !found {
+			t.Fatal("the waiting request is missing from the queue")
+		}
+		e.expect(400, e.admin(), "GET", "/api/v1/requests?status=bogus", nil)
+		// Users only ever get their own, whatever they ask for.
+		mine, _ := e.expect(200, e.bob(), "GET", "/api/v1/requests?all=true&status=awaiting_approval", nil)
+		for _, r := range mine.([]any) {
+			if get(r, "requested_by") != "bob@example.test" {
+				t.Fatalf("a user saw someone else's request: %v", r)
+			}
+		}
+	})
+
+	t.Run("every decision is in the audit log with its note", func(t *testing.T) {
+		v, raw := e.expect(200, e.admin(), "GET", "/api/v1/audit?limit=500", nil)
+		seen := map[string]bool{}
+		for _, ent := range v.([]any) {
+			seen[get(ent, "action").(string)] = true
+		}
+		for _, want := range []string{"request.approve", "request.reject", "request.cancel"} {
+			if !seen[want] {
+				t.Errorf("no %s entry", want)
+			}
+		}
+		if !strings.Contains(raw, "checked with finance") || !strings.Contains(raw, "Use the shared database instead.") {
+			t.Error("the decision notes are missing from the audit log")
+		}
+	})
+}
+
+// firstSucceeded finds any finished request, for tests that need one.
+func firstSucceeded(t *testing.T, e *env) string {
+	t.Helper()
+	v, _ := e.expect(200, e.admin(), "GET", "/api/v1/requests?all=true&status=succeeded", nil)
+	list := v.([]any)
+	if len(list) == 0 {
+		t.Fatal("no succeeded request to use")
+	}
+	return get(list[0], "id").(string)
+}

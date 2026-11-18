@@ -28,8 +28,11 @@ type Blueprint struct {
 	TemplateRepo  string            `json:"template_repo,omitempty"`
 	TemplateVars  map[string]string `json:"template_vars,omitempty"`
 	ExtraBranches []string          `json:"extra_branches,omitempty"`
-	Environments  []BlueprintEnv    `json:"environments"`
-	UpdatedAt     time.Time         `json:"updated_at"`
+	// RequiresApproval holds every request for this blueprint until an
+	// administrator other than the requester approves it.
+	RequiresApproval bool           `json:"requires_approval"`
+	Environments     []BlueprintEnv `json:"environments"`
+	UpdatedAt        time.Time      `json:"updated_at"`
 }
 
 // ErrBadReference means a blueprint names an integration that does not exist
@@ -88,13 +91,13 @@ func (s *Store) SaveBlueprint(ctx context.Context, b Blueprint, create bool) (Bl
 
 	var bpID string
 	if create {
-		err = tx.QueryRow(ctx, `INSERT INTO blueprints (name, gitsource_id, registry_id, git_parent, template_repo, template_vars, extra_branches)
-			VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-			b.Name, gitID, regID, b.GitParent, b.TemplateRepo, vars, branches).Scan(&bpID)
+		err = tx.QueryRow(ctx, `INSERT INTO blueprints (name, gitsource_id, registry_id, git_parent, template_repo, template_vars, extra_branches, requires_approval)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+			b.Name, gitID, regID, b.GitParent, b.TemplateRepo, vars, branches, b.RequiresApproval).Scan(&bpID)
 	} else {
 		err = tx.QueryRow(ctx, `UPDATE blueprints SET gitsource_id = $2, registry_id = $3, git_parent = $4, template_repo = $5,
-			template_vars = $6, extra_branches = $7, updated_at = now() WHERE name = $1 RETURNING id`,
-			b.Name, gitID, regID, b.GitParent, b.TemplateRepo, vars, branches).Scan(&bpID)
+			template_vars = $6, extra_branches = $7, requires_approval = $8, updated_at = now() WHERE name = $1 RETURNING id`,
+			b.Name, gitID, regID, b.GitParent, b.TemplateRepo, vars, branches, b.RequiresApproval).Scan(&bpID)
 	}
 	if err != nil {
 		return b, mapErr(err)
@@ -130,7 +133,7 @@ func nonNilMap(m map[string]string) map[string]string {
 }
 
 const blueprintSelect = `SELECT b.id, b.name, g.name, coalesce(r.name, ''), b.git_parent, b.template_repo,
-	b.template_vars, b.extra_branches, b.updated_at
+	b.template_vars, b.extra_branches, b.requires_approval, b.updated_at
 	FROM blueprints b JOIN integrations g ON g.id = b.gitsource_id LEFT JOIN integrations r ON r.id = b.registry_id`
 
 func (s *Store) scanBlueprints(ctx context.Context, where string, args ...any) ([]Blueprint, error) {
@@ -147,7 +150,7 @@ func (s *Store) scanBlueprints(ctx context.Context, where string, args ...any) (
 		var r row
 		var vars []byte
 		if err := rows.Scan(&r.id, &r.b.Name, &r.b.GitSource, &r.b.Registry, &r.b.GitParent, &r.b.TemplateRepo,
-			&vars, &r.b.ExtraBranches, &r.b.UpdatedAt); err != nil {
+			&vars, &r.b.ExtraBranches, &r.b.RequiresApproval, &r.b.UpdatedAt); err != nil {
 			rows.Close()
 			return nil, err
 		}

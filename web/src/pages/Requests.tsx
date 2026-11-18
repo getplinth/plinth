@@ -8,7 +8,7 @@ import { progress } from '../lib/steps'
 import { useMe } from '../session'
 import type { RequestRecord } from '../types'
 
-const active = (list?: RequestRecord[]) => !!list?.some((r) => r.status === 'pending' || r.status === 'running')
+const active = (list?: RequestRecord[]) => !!list?.some((r) => r.status === 'awaiting_approval' || r.status === 'pending' || r.status === 'running')
 
 export function RequestsPage() {
   const me = useMe()
@@ -69,7 +69,7 @@ export function RequestsPage() {
                         <StackGlyph rec={r} />
                         <div>
                           <StatusPill status={r.status} />
-                          <div className="sub">{p.total > 0 ? `${p.done} of ${p.total} steps` : ''}</div>
+                          <div className="sub">{r.status === 'awaiting_approval' ? 'Waiting for an administrator' : r.status === 'rejected' || r.status === 'cancelled' ? 'Nothing was set up' : p.total > 0 ? `${p.done} of ${p.total} steps` : ''}</div>
                         </div>
                       </div>
                     </td>

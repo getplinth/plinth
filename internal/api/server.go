@@ -81,6 +81,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /api/v1/requests", s.user(s.listRequests))
 	mux.Handle("GET /api/v1/requests/{id}", s.user(s.getRequest))
 	mux.Handle("POST /api/v1/requests/{id}/retry", s.user(s.retryRequest))
+	mux.Handle("POST /api/v1/requests/{id}/cancel", s.user(s.decide(store.DecisionCancel)))
 
 	// admins
 	mux.Handle("GET /api/v1/integrations", s.admin(s.listIntegrations))
@@ -92,6 +93,8 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/v1/blueprints", s.admin(s.createBlueprint))
 	mux.Handle("PUT /api/v1/blueprints/{name}", s.admin(s.replaceBlueprint))
 	mux.Handle("DELETE /api/v1/blueprints/{name}", s.admin(s.deleteBlueprint))
+	mux.Handle("POST /api/v1/requests/{id}/approve", s.admin(s.decide(store.DecisionApprove)))
+	mux.Handle("POST /api/v1/requests/{id}/reject", s.admin(s.decide(store.DecisionReject)))
 	mux.Handle("GET /api/v1/audit", s.admin(s.listAudit))
 	mux.Handle("GET /api/v1/drivers", s.admin(s.listDrivers))
 

@@ -33,6 +33,9 @@ func (s *Store) UpsertUser(ctx context.Context, sub, email, role string) (User, 
 
 // Request statuses.
 const (
+	StatusAwaiting  = "awaiting_approval"
+	StatusRejected  = "rejected"
+	StatusCancelled = "cancelled"
 	StatusPending   = "pending"
 	StatusRunning   = "running"
 	StatusSucceeded = "succeeded"
@@ -52,18 +55,25 @@ type RequestRecord struct {
 	State       orchestrator.State `json:"state"`
 	// Plan lists every step in execution order, including ones not started
 	// yet. Filled in by the API from the current blueprint; not stored.
-	Plan      []string  `json:"plan,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Plan []string `json:"plan,omitempty"`
+	// Decision, for requests that needed approval: who approved, rejected or
+	// cancelled, when, and the note they gave.
+	DecidedBy    string     `json:"decided_by,omitempty"`
+	DecidedAt    *time.Time `json:"decided_at,omitempty"`
+	DecisionNote string     `json:"decision_note,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
-const requestSelect = `SELECT r.id, b.name, t.name, u.email, u.id, r.payload, r.status, r.error, r.state, r.created_at, r.updated_at
-	FROM requests r JOIN blueprints b ON b.id = r.blueprint_id JOIN tenants t ON t.id = r.tenant_id JOIN users u ON u.id = r.requested_by`
+const requestSelect = `SELECT r.id, b.name, t.name, u.email, u.id, r.payload, r.status, r.error, r.state,
+	coalesce(d.email, ''), r.decided_at, r.decision_note, r.created_at, r.updated_at
+	FROM requests r JOIN blueprints b ON b.id = r.blueprint_id JOIN tenants t ON t.id = r.tenant_id
+	JOIN users u ON u.id = r.requested_by LEFT JOIN users d ON d.id = r.decided_by`
 
 func scanRequest(row pgx.Row) (RequestRecord, error) {
 	var r RequestRecord
 	var payload, state []byte
-	if err := row.Scan(&r.ID, &r.Blueprint, &r.Tenant, &r.RequestedBy, &r.UserID, &payload, &r.Status, &r.Error, &state, &r.CreatedAt, &r.UpdatedAt); err != nil {
+	if err := row.Scan(&r.ID, &r.Blueprint, &r.Tenant, &r.RequestedBy, &r.UserID, &payload, &r.Status, &r.Error, &state, &r.DecidedBy, &r.DecidedAt, &r.DecisionNote, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		return r, mapErr(err)
 	}
 	if err := json.Unmarshal(payload, &r.Payload); err != nil {
@@ -105,8 +115,13 @@ func (s *Store) SubmitRequest(ctx context.Context, p Submit) (RequestRecord, err
 	defer tx.Rollback(ctx)
 
 	var bpID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM blueprints WHERE name = $1`, p.Blueprint).Scan(&bpID); err != nil {
+	var needsApproval bool
+	if err := tx.QueryRow(ctx, `SELECT id, requires_approval FROM blueprints WHERE name = $1`, p.Blueprint).Scan(&bpID, &needsApproval); err != nil {
 		return RequestRecord{}, mapErr(err)
+	}
+	status := StatusPending
+	if needsApproval {
+		status = StatusAwaiting
 	}
 
 	tenant := naming.Normalize(p.Req.Tenant)
@@ -126,8 +141,8 @@ func (s *Store) SubmitRequest(ctx context.Context, p Submit) (RequestRecord, err
 
 	payload, _ := json.Marshal(p.Req)
 	var reqID string
-	if err := tx.QueryRow(ctx, `INSERT INTO requests (blueprint_id, tenant_id, requested_by, payload) VALUES ($1, $2, $3, $4) RETURNING id`,
-		bpID, tenantID, p.UserID, payload).Scan(&reqID); err != nil {
+	if err := tx.QueryRow(ctx, `INSERT INTO requests (blueprint_id, tenant_id, requested_by, payload, status) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		bpID, tenantID, p.UserID, payload, status).Scan(&reqID); err != nil {
 		return RequestRecord{}, mapErr(err)
 	}
 
@@ -143,7 +158,7 @@ func (s *Store) SubmitRequest(ctx context.Context, p Submit) (RequestRecord, err
 			return RequestRecord{}, mapErr(err)
 		}
 	}
-	_ = audit(ctx, tx, p.UserEmail, "request.submit", reqID, map[string]any{"tenant": tenant, "blueprint": p.Blueprint, "projects": len(p.Req.Projects)})
+	_ = audit(ctx, tx, p.UserEmail, "request.submit", reqID, map[string]any{"tenant": tenant, "blueprint": p.Blueprint, "projects": len(p.Req.Projects), "needs_approval": needsApproval})
 	if err := tx.Commit(ctx); err != nil {
 		return RequestRecord{}, err
 	}
@@ -157,16 +172,21 @@ func (s *Store) GetRequest(ctx context.Context, id string) (RequestRecord, error
 	return scanRequest(s.pool.QueryRow(ctx, requestSelect+` WHERE r.id = $1`, id))
 }
 
-// ListRequests returns newest first. userID "" lists everyone's requests.
-func (s *Store) ListRequests(ctx context.Context, userID string, limit int) ([]RequestRecord, error) {
+// ListRequests returns newest first. userID "" lists everyone's requests;
+// status "" lists every status.
+func (s *Store) ListRequests(ctx context.Context, userID, status string, limit int) ([]RequestRecord, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	q := requestSelect
+	q := requestSelect + ` WHERE true`
 	args := []any{limit}
 	if userID != "" {
-		q += ` WHERE r.requested_by = $2`
 		args = append(args, userID)
+		q += fmt.Sprintf(` AND r.requested_by = $%d`, len(args))
+	}
+	if status != "" {
+		args = append(args, status)
+		q += fmt.Sprintf(` AND r.status = $%d`, len(args))
 	}
 	rows, err := s.pool.Query(ctx, q+` ORDER BY r.created_at DESC LIMIT $1`, args...)
 	if err != nil {
@@ -269,4 +289,91 @@ func isUUID(s string) bool {
 		}
 	}
 	return true
+}
+
+// Decision actions.
+const (
+	DecisionApprove = "approve"
+	DecisionReject  = "reject"
+	DecisionCancel  = "cancel"
+)
+
+// Decision is an approve, reject or cancel of a request awaiting approval.
+type Decision struct {
+	Action     string
+	ActorID    string
+	ActorEmail string
+	ActorAdmin bool
+	Note       string
+}
+
+// DecideRequest records a decision on a request that is awaiting approval,
+// atomically (a request can be decided once):
+//   - approve: administrators only, and never the requester (ErrSelfApproval);
+//     the request goes to the queue;
+//   - reject: administrators only; the request ends as rejected;
+//   - cancel: the requester or an administrator; the request ends as cancelled.
+//
+// Rejecting or cancelling releases the names the request reserved, so another
+// tenant can use them. The decision and its note are written to the audit log.
+func (s *Store) DecideRequest(ctx context.Context, id string, d Decision) (RequestRecord, error) {
+	if !isUUID(id) {
+		return RequestRecord{}, ErrNotFound
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return RequestRecord{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var status, requester string
+	if err := tx.QueryRow(ctx, `SELECT status, requested_by::text FROM requests WHERE id = $1 FOR UPDATE`, id).Scan(&status, &requester); err != nil {
+		return RequestRecord{}, mapErr(err)
+	}
+	if status != StatusAwaiting {
+		return RequestRecord{}, ErrConflict
+	}
+
+	var next string
+	switch d.Action {
+	case DecisionApprove:
+		if !d.ActorAdmin {
+			return RequestRecord{}, ErrForbidden
+		}
+		if requester == d.ActorID {
+			return RequestRecord{}, ErrSelfApproval
+		}
+		next = StatusPending
+	case DecisionReject:
+		if !d.ActorAdmin {
+			return RequestRecord{}, ErrForbidden
+		}
+		next = StatusRejected
+	case DecisionCancel:
+		if !d.ActorAdmin && requester != d.ActorID {
+			return RequestRecord{}, ErrForbidden
+		}
+		next = StatusCancelled
+	default:
+		return RequestRecord{}, fmt.Errorf("store: unknown decision %q", d.Action)
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE requests SET status = $2, decided_by = $3, decided_at = now(), decision_note = $4, updated_at = now() WHERE id = $1`,
+		id, next, d.ActorID, d.Note); err != nil {
+		return RequestRecord{}, err
+	}
+	if next == StatusRejected || next == StatusCancelled {
+		// Free the reserved names. Only rows this request created are removed;
+		// a project that existed before it stays.
+		if _, err := tx.Exec(ctx, `DELETE FROM projects WHERE request_id = $1`, id); err != nil {
+			return RequestRecord{}, err
+		}
+	}
+	if err := audit(ctx, tx, d.ActorEmail, "request."+d.Action, id, map[string]any{"note": d.Note}); err != nil {
+		return RequestRecord{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return RequestRecord{}, err
+	}
+	return s.GetRequest(ctx, id)
 }

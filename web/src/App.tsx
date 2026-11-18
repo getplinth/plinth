@@ -1,6 +1,7 @@
 import { Link, Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './Layout'
 import { Mark } from './components'
+import { ApprovalsPage } from './pages/Approvals'
 import { AuditPage } from './pages/Audit'
 import { BlueprintsPage } from './pages/Blueprints'
 import { IntegrationsPage } from './pages/Integrations'
@@ -55,6 +56,7 @@ export function App() {
           <Route path="new" element={<NewRequestPage />} />
           <Route path="requests/:id" element={<RequestPage />} />
           <Route path="requests" element={<Navigate to="/" replace />} />
+          <Route path="admin/approvals" element={<AdminOnly><ApprovalsPage /></AdminOnly>} />
           <Route path="admin/integrations" element={<AdminOnly><IntegrationsPage /></AdminOnly>} />
           <Route path="admin/blueprints" element={<AdminOnly><BlueprintsPage /></AdminOnly>} />
           <Route path="admin/audit" element={<AdminOnly><AuditPage /></AdminOnly>} />

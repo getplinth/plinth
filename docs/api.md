@@ -42,24 +42,44 @@ The role is refreshed from the token on every call, so removing someone from the
 | `POST`, `PUT /{name}`, `DELETE /{name}` | admin | manage blueprints |
 | `GET /api/v1/quota-tiers` | user | available tiers |
 | `POST /api/v1/requests` | user | submit `{blueprint, tenant, projects[]}`; returns `202` and the request |
-| `GET /api/v1/requests`, `GET /{id}` | user | own requests (`?all=true` for admins); status, per-step state, outputs |
+| `GET /api/v1/requests`, `GET /{id}` | user | own requests (`?all=true` for admins; `?status=awaiting_approval` filters); status, per-step state, outputs, and the decision |
 | `POST /api/v1/requests/{id}/retry` | owner or admin | re-queue a failed request; finished steps are not repeated |
+| `POST /api/v1/requests/{id}/approve` | admin, never the requester | release a request that is awaiting approval (optional `note`) |
+| `POST /api/v1/requests/{id}/reject` | admin | refuse it; a `note` of at least 3 characters is required |
+| `POST /api/v1/requests/{id}/cancel` | owner or admin | withdraw a request that is awaiting approval |
 | `GET /api/v1/audit` | admin | who did what |
 
 ## Request lifecycle
 
 ```mermaid
 stateDiagram-v2
-  [*] --> pending: submitted (validated, names reserved)
+  [*] --> awaiting_approval: submitted to a blueprint that needs approval
+  [*] --> pending: submitted to any other blueprint
+  awaiting_approval --> pending: approved by another administrator
+  awaiting_approval --> rejected: rejected, with a reason
+  awaiting_approval --> cancelled: withdrawn by the requester or an administrator
   pending --> running: a worker claims it (lease)
   running --> succeeded: all steps done
   running --> failed: a step failed after its attempts
   running --> pending: worker shut down / lease expired
   failed --> pending: retry (owner or admin)
   succeeded --> [*]
+  rejected --> [*]
+  cancelled --> [*]
 ```
 
 A worker claims a request with a lease (`FOR UPDATE SKIP LOCKED`) and refreshes it each time it saves progress. If the worker dies the lease expires and another worker resumes from the saved state. A worker that loses its lease stops without recording an outcome. On shutdown, running requests are handed back at once.
+
+## Approval
+
+A blueprint can be marked **needs approval** (`requires_approval`). Requests for it are validated and stored as usual, but wait in `awaiting_approval`: no worker picks them up and no system is contacted until an administrator approves.
+
+- **Four eyes.** Nobody approves their own request, administrators included (`403`, "another administrator has to"). With a single administrator, such a blueprint cannot be used by that administrator; add a second one.
+- **Reasons.** A rejection needs a reason (3 to 500 characters), which the requester sees. Approvals and withdrawals may carry a note. Notes are kept in the audit log, together with who decided.
+- **Decided once.** A decision is atomic: if two administrators approve at the same moment, one gets `200` and the other `409`. A decided request cannot be decided again.
+- **Names are released.** While a request waits, the names it would create are reserved, as for any request. Rejecting or withdrawing it frees them.
+- **What was approved is what runs.** A request's content cannot be edited after submission. The blueprint, however, is read when the request runs, so changing a blueprint between approval and execution changes what is set up; review blueprint changes like any other change.
+- **Visibility.** Administrators list the queue with `GET /api/v1/requests?all=true&status=awaiting_approval`. The requester sees the state and the verdict on their own request.
 
 ## Security properties
 

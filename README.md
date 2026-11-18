@@ -6,7 +6,7 @@ databases, secret stores) and bundle them into **blueprints**. Developers fill
 in one form; Plinth provisions the repository, registry project, namespace
 (with RBAC, quota and network policy) and database, then reports status.
 
-> Status: the engine, API and web interface work and are tested end to end against real systems. Try the interface with `make demo` (see [docs/ui.md](docs/ui.md)). Not built yet: approvals, tenant members, a Helm chart.
+> Status: the engine, API and web interface work and are tested end to end against real systems. Try the interface with `make demo` (see [docs/ui.md](docs/ui.md)). Not built yet: tenant members, a Helm chart.
 
 ## Concepts
 

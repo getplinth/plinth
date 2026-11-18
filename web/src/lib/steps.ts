@@ -69,7 +69,7 @@ export function orderedKeys(rec: RequestRecord): string[] {
 function viewOf(rec: RequestRecord, key: string): StepView {
   const d = describeStep(key)
   const st = rec.state.steps[key]
-  const open = rec.status === 'pending' || rec.status === 'running'
+  const open = rec.status === 'awaiting_approval' || rec.status === 'pending' || rec.status === 'running'
   const status: ViewStatus = st ? st.status : open ? 'waiting' : 'not-run'
   return { key, label: d.label, env: d.env, status, attempts: st?.attempts ?? 0, error: st?.error }
 }
@@ -113,6 +113,9 @@ export function progress(rec: RequestRecord): Progress {
 }
 
 export const statusLabel: Record<string, string> = {
+  awaiting_approval: 'Needs approval',
+  rejected: 'Rejected',
+  cancelled: 'Withdrawn',
   pending: 'Queued',
   running: 'Running',
   succeeded: 'Done',

@@ -1,13 +1,14 @@
 import { useCallback } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api'
-import { Banner, Courses, ErrorBanner, StatusPill } from '../components'
+import { Banner, ConfirmButton, Courses, ErrorBanner, StatusPill } from '../components'
 import { useAction, useLoad } from '../hooks'
 import { fullTime, relativeTime } from '../lib/format'
 import { progress } from '../lib/steps'
+import { useMe } from '../session'
 import type { RequestRecord } from '../types'
 
-const active = (r?: RequestRecord) => r?.status === 'pending' || r?.status === 'running'
+const active = (r?: RequestRecord) => r?.status === 'awaiting_approval' || r?.status === 'pending' || r?.status === 'running'
 
 /** Outputs are plain facts about what was created; show those that help. */
 function outputRows(rec: RequestRecord): [string, string][] {
@@ -31,6 +32,12 @@ export function RequestPage() {
     reload()
   }, [id, reload])
   const retry = useAction(retryFn)
+  const withdrawFn = useCallback(async () => {
+    await api(`/requests/${id}/cancel`, { method: 'POST' })
+    reload()
+  }, [id, reload])
+  const withdraw = useAction(withdrawFn)
+  const me = useMe()
 
   if (loading && !rec) return <p className="muted" role="status">Loading request…</p>
   if (error && !rec) {
@@ -57,11 +64,15 @@ export function RequestPage() {
             <span>Blueprint <b>{rec.blueprint}</b></span>
             <span>Requested by <b>{rec.requested_by}</b></span>
             <span title={fullTime(rec.created_at)}>{relativeTime(rec.created_at)}</span>
+            {rec.decided_by && rec.status !== 'rejected' && rec.status !== 'cancelled' && <span>Approved by <b>{rec.decided_by}</b></span>}
           </p>
         </div>
         <div className="actions">
           <StatusPill status={rec.status} />
           {p.total > 0 && <span className="muted">{p.done} of {p.total} steps done</span>}
+          {rec.status === 'awaiting_approval' && (
+            <ConfirmButton label="Withdraw request" confirmLabel="Confirm withdraw" disabled={withdraw.busy} onConfirm={() => void withdraw.run()} />
+          )}
           {rec.status === 'failed' && (
             <button className="btn primary" disabled={retry.busy} onClick={() => void retry.run()}>
               {retry.busy ? 'Retrying…' : 'Retry failed steps'}
@@ -71,6 +82,31 @@ export function RequestPage() {
       </div>
 
       <ErrorBanner message={retry.error} details={retry.details} />
+      <ErrorBanner message={withdraw.error} details={withdraw.details} />
+      {rec.status === 'awaiting_approval' && (
+        <Banner kind="warn" title="Waiting for approval.">
+          {' '}
+          This blueprint needs an administrator to approve the request before anything is set up. Nothing has been created yet.
+          {me.role === 'admin' && rec.requested_by !== me.email && (
+            <> <Link to="/admin/approvals">Review it in Approvals.</Link></>
+          )}
+          {me.role === 'admin' && rec.requested_by === me.email && <> Because you asked for it, another administrator has to approve it.</>}
+        </Banner>
+      )}
+      {rec.status === 'rejected' && (
+        <Banner title={`Rejected by ${rec.decided_by ?? 'an administrator'}.`}>
+          {' '}
+          {rec.decision_note ? <>Their reason: “{rec.decision_note}” </> : null}
+          Nothing was set up. Change the request and submit it again.
+        </Banner>
+      )}
+      {rec.status === 'cancelled' && (
+        <Banner kind="info" title="Withdrawn.">
+          {' '}
+          {rec.decision_note ? <>{rec.decision_note} </> : null}
+          Nothing was set up.
+        </Banner>
+      )}
       {rec.status === 'failed' && (
         <Banner title="This request stopped.">
           {' '}

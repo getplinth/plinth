@@ -80,7 +80,7 @@ export function NewRequestPage() {
         <div className="panel">
           <h2>Team</h2>
           <div className="row">
-            <Field id="blueprint" label="Blueprint" error={shown.blueprint} hint={bp ? `Sets up ${bp.environments.join(', ')}${bp.has_registry ? ', with a container registry' : ''}.` : 'The combination of systems your projects are created in.'}>
+            <Field id="blueprint" label="Blueprint" error={shown.blueprint} hint={bp ? `Sets up ${bp.environments.join(', ')}${bp.has_registry ? ', with a container registry' : ''}.${bp.requires_approval ? ' An administrator has to approve it first.' : ''}` : 'The combination of systems your projects are created in.'}>
               <select id="blueprint" value={form.blueprint} onChange={(e) => setForm({ ...form, blueprint: e.target.value, projects: form.projects.map((p) => ({ ...p, useDb: false })) })} {...describe('blueprint', shown.blueprint)}>
                 <option value="">Choose a blueprint…</option>
                 {blueprints.data?.map((b) => (
@@ -180,7 +180,7 @@ export function NewRequestPage() {
         </div>
 
         <div className="actions">
-          <button className="btn primary" type="submit" disabled={submit.busy}>{submit.busy ? 'Submitting…' : 'Submit request'}</button>
+          <button className="btn primary" type="submit" disabled={submit.busy}>{submit.busy ? 'Submitting…' : bp?.requires_approval ? 'Submit for approval' : 'Submit request'}</button>
           <Link className="btn quiet" to="/">Cancel</Link>
         </div>
       </form>

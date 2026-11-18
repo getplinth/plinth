@@ -37,7 +37,7 @@ export interface RequestPayload {
   projects: ProjectInput[]
 }
 
-export type RequestStatus = 'pending' | 'running' | 'succeeded' | 'failed'
+export type RequestStatus = 'awaiting_approval' | 'pending' | 'running' | 'succeeded' | 'failed' | 'rejected' | 'cancelled'
 
 export interface RequestRecord {
   id: string
@@ -49,6 +49,9 @@ export interface RequestRecord {
   error?: string
   state: RequestState
   plan?: string[]
+  decided_by?: string
+  decided_at?: string
+  decision_note?: string
   created_at: string
   updated_at: string
 }
@@ -59,6 +62,7 @@ export interface BlueprintSummary {
   has_database: boolean
   database_types: string[]
   has_registry: boolean
+  requires_approval: boolean
 }
 
 export interface BlueprintEnv {
@@ -77,6 +81,7 @@ export interface Blueprint {
   template_repo?: string
   template_vars?: Record<string, string>
   extra_branches?: string[]
+  requires_approval?: boolean
   environments: BlueprintEnv[]
   updated_at?: string
 }

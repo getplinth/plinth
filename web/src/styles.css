@@ -237,3 +237,9 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .login-wait { max-width: 30rem; margin: 18vh auto 0; text-align: center; padding: 0 var(--gutter); }
 .login-wait .mark { margin: 0 auto 14px; }
 pre.detail { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; overflow: auto; font-size: 0.8rem; margin: 6px 0 0; }
+
+ul.plain { list-style: none; padding: 0; margin: 0 0 4px; display: grid; gap: 8px; }
+ul.plain li { border-left: 3px solid var(--line-strong); padding-left: 10px; }
+.badge { display: inline-block; min-width: 1.4em; padding: 0 6px; margin-left: 6px; border-radius: 999px; background: var(--warn); color: var(--surface); font-size: 0.78rem; font-weight: 700; text-align: center; line-height: 1.5; }
+
+@media (max-width: 920px) { .nav .nav-label { display: none; } }

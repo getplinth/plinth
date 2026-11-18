@@ -19,6 +19,7 @@ function toForm(b?: Blueprint) {
     git_parent: b?.git_parent ?? '',
     template_repo: b?.template_repo ?? '',
     branches: (b?.extra_branches ?? []).join(', '),
+    approval: b?.requires_approval ?? false,
     vars: Object.entries(b?.template_vars ?? {}).map(([key, value]): VarRow => ({ key, value })),
     envs: b?.environments.length ? b.environments.map((e) => ({ ...blankEnv(), ...e })) : [blankEnv()],
   }
@@ -37,6 +38,7 @@ function Editor({ existing, integrations, onDone, onCancel }: { existing?: Bluep
     template_repo: f.template_repo.trim() || undefined,
     template_vars: Object.fromEntries(f.vars.filter((v) => v.key.trim()).map((v) => [v.key.trim(), v.value])),
     extra_branches: f.branches.split(',').map((s) => s.trim()).filter(Boolean),
+    requires_approval: f.approval,
     environments: f.envs.map((e) => ({
       name: e.name.trim(),
       cluster: e.cluster,
@@ -102,6 +104,14 @@ function Editor({ existing, integrations, onDone, onCancel }: { existing?: Bluep
         </Field>
       </div>
 
+      <div className="check">
+        <input id="bp-approval" type="checkbox" checked={f.approval} onChange={(e) => setF({ ...f, approval: e.target.checked })} />
+        <label htmlFor="bp-approval">
+          <strong>Needs approval</strong>
+          <p className="hint">Requests wait until an administrator other than the requester approves them. Nothing is set up before then.</p>
+        </label>
+      </div>
+
       <div className="field">
         <span className="label">Replacements in the template <span className="opt">(optional)</span></span>
         <p className="hint">Text replaced in every template file. Use {'{project}'} and {'{tenant}'} in the value.</p>
@@ -158,7 +168,7 @@ function Card({ bp, integrations, onChanged }: { bp: Blueprint; integrations: In
   return (
     <div className="panel">
       <div className="page-head" style={{ marginBottom: 10 }}>
-        <h2>{bp.name}</h2>
+        <h2>{bp.name} {bp.requires_approval && <span className="chip warn">needs approval</span>}</h2>
         <div className="actions">
           <button className="btn sm" onClick={() => setEditing(true)}>Edit</button>
           <ConfirmButton label="Delete" confirmLabel="Confirm delete" disabled={del.busy} onConfirm={() => void del.run()} />

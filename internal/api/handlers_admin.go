@@ -32,6 +32,8 @@ func (s *Server) storeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "not found")
+	case errors.Is(err, store.ErrSelfApproval):
+		writeErr(w, http.StatusForbidden, store.ErrSelfApproval.Error()+"; another administrator has to")
 	case errors.Is(err, store.ErrForbidden):
 		writeErr(w, http.StatusForbidden, "this tenant belongs to another user")
 	case errors.Is(err, store.ErrInUse):

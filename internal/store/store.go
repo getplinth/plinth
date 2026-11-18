@@ -31,6 +31,8 @@ var (
 	// ErrLeaseLost means another worker took over the request; the caller
 	// must stop working on it and must not record an outcome.
 	ErrLeaseLost = errors.New("request lease lost")
+	// ErrSelfApproval: nobody approves their own request, administrators included.
+	ErrSelfApproval = errors.New("you cannot approve your own request")
 )
 
 // ErrNamespaceTaken means another tenant already owns the derived name.

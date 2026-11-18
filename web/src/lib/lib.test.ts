@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { databaseOf, isDnsLabel, isHostname, namespaceOf, normalize, stripScheme } from './naming'
 import { emptyProject, hasErrors, toPayload, validate, type NewRequestForm } from './form'
-import { buildSections, describeStep, orderedKeys, progress } from './steps'
+import { buildSections, describeStep, orderedKeys, progress, statusLabel } from './steps'
 import { listProjects, relativeTime } from './format'
 import type { RequestRecord } from '../types'
 
@@ -193,5 +193,23 @@ describe('format', () => {
     expect(listProjects(['a'])).toBe('a')
     expect(listProjects(['a', 'b'])).toBe('a and b')
     expect(listProjects(['a', 'b', 'c', 'd'])).toBe('a, b and 2 more')
+  })
+})
+
+describe('steps for requests that need approval', () => {
+  it('shows every planned step as waiting until approved', () => {
+    const s = buildSections(record({ status: 'awaiting_approval' }))
+    expect(s.flatMap((x) => x.steps).every((x) => x.status === 'waiting')).toBe(true)
+  })
+  it('shows nothing as run for rejected and withdrawn requests', () => {
+    for (const status of ['rejected', 'cancelled'] as const) {
+      const s = buildSections(record({ status }))
+      expect(s.flatMap((x) => x.steps).every((x) => x.status === 'not-run')).toBe(true)
+    }
+  })
+  it('uses plain words for the states', () => {
+    expect(statusLabel.awaiting_approval).toBe('Needs approval')
+    expect(statusLabel.rejected).toBe('Rejected')
+    expect(statusLabel.cancelled).toBe('Withdrawn')
   })
 })

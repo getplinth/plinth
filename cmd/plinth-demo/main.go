@@ -105,6 +105,7 @@ func run(log *slog.Logger) error {
 		{Sub: "alice", Email: "alice@example.test", Name: "Alice (developer)", Groups: []string{"developers"}},
 		{Sub: "bob", Email: "bob@example.test", Name: "Bob (developer)", Groups: []string{"developers"}},
 		{Sub: "root", Email: "root@example.test", Name: "Root (platform admin)", Groups: []string{adminGrp}},
+		{Sub: "ada", Email: "ada@example.test", Name: "Ada (platform admin)", Groups: []string{adminGrp}},
 	})
 	verifier, err := auth.New(ctx, auth.Config{Issuer: idp.Issuer(), Audience: clientID, AdminGroup: adminGrp})
 	if err != nil {
@@ -136,7 +137,12 @@ func run(log *slog.Logger) error {
 		_ = srv.Shutdown(sh)
 	}()
 
-	fmt.Printf("\nPlinth demo is running (simulated systems, no passwords).\n\n  Open   http://%s\n  Sign in as Alice or Bob to request a project, or as Root to administer.\n  Tip    a tenant name containing \"fail\" fails once so you can try Retry.\n\nPress Ctrl+C to stop.\n\n", appAddr)
+	fmt.Printf("\nPlinth demo is running (simulated systems, no passwords).\n\n"+
+		"  Open   http://%s\n"+
+		"  Sign in as Alice or Bob to request a project, or as Root or Ada to administer.\n"+
+		"  Try    the \"regulated\" blueprint waits for an administrator other than the requester.\n"+
+		"  Tip    a tenant name containing \"fail\" fails once so you can try Retry.\n\n"+
+		"Press Ctrl+C to stop.\n\n", appAddr)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -144,36 +150,47 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-// seed creates a ready-to-use blueprint on the first run.
+// seed creates ready-to-use blueprints on the first run: "standard" runs at
+// once, "regulated" waits for an administrator's approval.
 func seed(ctx context.Context, st *store.Store) error {
-	if _, err := st.GetBlueprint(ctx, "standard"); err == nil {
-		return nil
-	}
-	for _, in := range []struct {
-		kind, name string
-		cfg        map[string]string
-	}{
-		{"gitsource", "demo-git", map[string]string{"base_url": "https://git.demo.invalid"}},
-		{"registry", "demo-registry", map[string]string{"base_url": "https://registry.demo.invalid"}},
-		{"cluster", "demo-dev", map[string]string{"name": "dev", "server": "https://dev.demo.invalid"}},
-		{"cluster", "demo-prod", map[string]string{"name": "prod", "server": "https://prod.demo.invalid"}},
-		{"database", "demo-db", map[string]string{"host": "db.demo.invalid"}},
-	} {
-		driver := "demo"
-		if in.kind == "database" {
-			driver = "postgres" // the simulated database presents itself as PostgreSQL
+	if _, err := st.GetBlueprint(ctx, "standard"); err != nil {
+		for _, in := range []struct {
+			kind, name string
+			cfg        map[string]string
+		}{
+			{"gitsource", "demo-git", map[string]string{"base_url": "https://git.demo.invalid"}},
+			{"registry", "demo-registry", map[string]string{"base_url": "https://registry.demo.invalid"}},
+			{"cluster", "demo-dev", map[string]string{"name": "dev", "server": "https://dev.demo.invalid"}},
+			{"cluster", "demo-prod", map[string]string{"name": "prod", "server": "https://prod.demo.invalid"}},
+			{"database", "demo-db", map[string]string{"host": "db.demo.invalid"}},
+		} {
+			driver := "demo"
+			if in.kind == "database" {
+				driver = "postgres" // the simulated database presents itself as PostgreSQL
+			}
+			if _, err := st.CreateIntegration(ctx, in.kind, driver, in.name, in.cfg); err != nil && !errors.Is(err, store.ErrConflict) {
+				return err
+			}
 		}
-		if _, err := st.CreateIntegration(ctx, in.kind, driver, in.name, in.cfg); err != nil && !errors.Is(err, store.ErrConflict) {
+	}
+	for _, bp := range []struct {
+		name     string
+		approval bool
+	}{{"standard", false}, {"regulated", true}} {
+		if _, err := st.GetBlueprint(ctx, bp.name); err == nil {
+			continue
+		}
+		if _, err := st.SaveBlueprint(ctx, store.Blueprint{
+			Name: bp.name, GitSource: "demo-git", Registry: "demo-registry", GitParent: "tenants",
+			TemplateRepo: "platform/app-template", ExtraBranches: []string{"develop", "staging"},
+			RequiresApproval: bp.approval,
+			Environments: []store.BlueprintEnv{
+				{Name: "dev", Cluster: "demo-dev", Database: "demo-db", AccessPrefix: "oidc:", IngressNS: "ingress"},
+				{Name: "prod", Cluster: "demo-prod", AccessPrefix: "oidc:", IngressNS: "ingress"},
+			},
+		}, true); err != nil {
 			return err
 		}
 	}
-	_, err := st.SaveBlueprint(ctx, store.Blueprint{
-		Name: "standard", GitSource: "demo-git", Registry: "demo-registry", GitParent: "tenants",
-		TemplateRepo: "platform/app-template", ExtraBranches: []string{"develop", "staging"},
-		Environments: []store.BlueprintEnv{
-			{Name: "dev", Cluster: "demo-dev", Database: "demo-db", AccessPrefix: "oidc:", IngressNS: "ingress"},
-			{Name: "prod", Cluster: "demo-prod", AccessPrefix: "oidc:", IngressNS: "ingress"},
-		},
-	}, true)
-	return err
+	return nil
 }
