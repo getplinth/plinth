@@ -74,3 +74,24 @@ func TestRedactedHidesSecrets(t *testing.T) {
 		t.Fatalf("leak: %s", s)
 	}
 }
+
+func TestTrustUnverifiedEmailIsOffByDefaultAndMustBeABoolean(t *testing.T) {
+	c, err := load(env(valid()))
+	if err != nil || c.TrustUnverifiedEmail {
+		t.Fatalf("default: %+v %v", c, err)
+	}
+	m := valid()
+	m["PLINTH_TRUST_UNVERIFIED_EMAIL"] = "true"
+	if c, err := load(env(m)); err != nil || !c.TrustUnverifiedEmail {
+		t.Fatalf("on: %+v %v", c, err)
+	}
+	m["PLINTH_TRUST_UNVERIFIED_EMAIL"] = "maybe"
+	if _, err := load(env(m)); err == nil {
+		t.Fatal("a non-boolean value must be rejected, not treated as off")
+	}
+	m["PLINTH_TRUST_UNVERIFIED_EMAIL"] = "true"
+	c, _ = load(env(m))
+	if !strings.Contains(c.Redacted(), "trust_unverified_email=true") {
+		t.Error("the setting should be visible in the startup log")
+	}
+}

@@ -128,12 +128,23 @@ export interface TeamMember {
   added_at: string
 }
 
+export interface Invitation {
+  id: string
+  email: string
+  role: TeamRole
+  invited_by?: string
+  created_at: string
+  expires_at: string
+}
+
 export interface Team {
   name: string
   /** The viewer's role. Empty for an administrator who is not in the team. */
   role: TeamRole | ''
   member_count: number
   members?: TeamMember[]
+  /** Open invitations. Only owners and administrators receive them. */
+  invitations?: Invitation[]
   projects: string[]
   created_at: string
 }

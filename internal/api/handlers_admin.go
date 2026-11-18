@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -38,8 +39,8 @@ func (s *Server) storeError(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusForbidden, "only team owners can do this")
 	case errors.Is(err, store.ErrLastOwner):
 		writeErr(w, http.StatusConflict, "a team needs at least one owner: make someone else an owner first")
-	case errors.Is(err, store.ErrUserUnknown):
-		writeErr(w, http.StatusNotFound, "nobody with that e-mail address has signed in to Plinth yet: ask them to sign in once, then add them")
+	case errors.Is(err, store.ErrTooManyInvitations):
+		writeErr(w, http.StatusConflict, fmt.Sprintf("this team already has the maximum of %d open invitations: revoke some first", store.MaxOpenInvitations))
 	case errors.Is(err, store.ErrAmbiguousEmail):
 		writeErr(w, http.StatusConflict, "more than one account has that e-mail address, so it cannot identify one person: ask an administrator")
 	case errors.Is(err, store.ErrSelfApproval):

@@ -81,6 +81,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /api/v1/tenants/{name}", s.user(s.getTenant))
 	mux.Handle("POST /api/v1/tenants/{name}/members", s.user(s.addMember))
 	mux.Handle("PUT /api/v1/tenants/{name}/members/{user}", s.user(s.setMemberRole))
+	mux.Handle("DELETE /api/v1/tenants/{name}/invitations/{id}", s.user(s.revokeInvitation))
 	mux.Handle("DELETE /api/v1/tenants/{name}/members/{user}", s.user(s.removeMember))
 	mux.Handle("POST /api/v1/requests", s.user(s.submitRequest))
 	mux.Handle("GET /api/v1/requests", s.user(s.listRequests))
@@ -170,7 +171,7 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (caller, b
 		writeErr(w, http.StatusUnauthorized, "invalid token")
 		return caller{}, false
 	}
-	u, err := s.d.Store.UpsertUser(r.Context(), id.Sub, id.Email, id.Role)
+	u, err := s.d.Store.UpsertUser(r.Context(), id.Sub, id.Email, id.EmailVerified, id.Role)
 	if err != nil {
 		s.d.Log.Error("upsert user", "err", err)
 		writeErr(w, http.StatusInternalServerError, "internal error")

@@ -12,7 +12,7 @@ Open <http://127.0.0.1:8080> and sign in as **Alice** or **Bob** (developers) or
 
 Things to try:
 - **Approval.** The `regulated` blueprint needs approval: ask for a project as Alice, then approve it as Root. Root cannot approve Root's own request; Ada can.
-- **Teams.** As Alice, request a project for a new team, add `bob@example.test` on the team page, then sign in as Bob and open Requests: the team's requests are there, and Bob can request for the team too. Someone who has never signed in cannot be added yet.
+- **Teams.** As Alice, request a project for a new team, add `bob@example.test` on the team page, then sign in as Bob and open Requests: the team's requests are there, and Bob can request for the team too. Add `newcomer@example.test` instead and the page says they are invited; they join when they first sign in with that address, and an owner can revoke the invitation before then.
 
 For UI development run `make demo` in one terminal and `cd web && npm run dev` in another (the dev server proxies `/api` to the demo).
 

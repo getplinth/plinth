@@ -9,6 +9,7 @@ const calls: Call[] = []
 let team: Team
 let teams: Team[] = []
 let failWith: string | undefined
+let inviteResponse: unknown
 let me = { id: 'u-alice', email: 'alice@example.test', role: 'user' as 'user' | 'admin' }
 
 vi.mock('../api', () => ({
@@ -19,6 +20,7 @@ vi.mock('../api', () => ({
       const e = new Error(failWith)
       throw e
     }
+    if (method === 'POST' && path.endsWith('/members') && inviteResponse) return inviteResponse
     if (path === '/tenants' || path === '/tenants?all=true') return teams
     if (path.startsWith('/tenants/') && method === 'GET') return team
     return {}
@@ -52,6 +54,7 @@ const open = (path = '/teams/payments') =>
 beforeEach(() => {
   calls.length = 0
   failWith = undefined
+  inviteResponse = undefined
   me = { id: 'u-alice', email: 'alice@example.test', role: 'user' }
   team = base('owner')
   teams = [{ ...base('owner'), members: undefined }]
@@ -80,12 +83,39 @@ describe('team page for an owner', () => {
   })
 
   it("shows the server's explanation when someone cannot be added", async () => {
-    failWith = 'nobody with that e-mail address has signed in to Plinth yet: ask them to sign in once, then add them'
+    failWith = 'this team already has the maximum of 50 open invitations: revoke some first'
     const user = userEvent.setup()
     open()
     await user.type(await screen.findByLabelText('E-mail address'), 'ghost@example.test')
     await user.click(screen.getByRole('button', { name: 'Add to team' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('signed in to Plinth yet')
+    expect(await screen.findByRole('alert')).toHaveTextContent('50 open invitations')
+  })
+
+  it('says so when the person is invited because they have not signed in yet', async () => {
+    inviteResponse = { id: 'i1', email: 'new@example.test', role: 'member', created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 864e5).toISOString() }
+    const user = userEvent.setup()
+    open()
+    await user.type(await screen.findByLabelText('E-mail address'), 'new@example.test')
+    await user.click(screen.getByRole('button', { name: 'Add to team' }))
+    expect(await screen.findByText(/new@example.test has not signed in to Plinth yet/)).toBeInTheDocument()
+    expect(screen.getByText(/does not send e-mail/)).toBeInTheDocument()
+  })
+
+  it('lists open invitations to owners and revokes one', async () => {
+    team = { ...base('owner'), invitations: [{ id: 'i1', email: 'later@example.test', role: 'owner', invited_by: 'alice@example.test', created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 864e5).toISOString() }] }
+    const user = userEvent.setup()
+    open()
+    expect(await screen.findByText('Invited, not joined yet')).toBeInTheDocument()
+    const row = screen.getByText('later@example.test').closest('tr')!
+    await user.click(within(row).getByRole('button', { name: 'Revoke' }))
+    await user.click(within(row).getByRole('button', { name: 'Confirm revoke' }))
+    await waitFor(() => expect(calls.find((c) => c.method === 'DELETE')).toMatchObject({ path: '/tenants/payments/invitations/i1' }))
+  })
+
+  it('shows no invitations section when there are none', async () => {
+    open()
+    await screen.findByLabelText('E-mail address')
+    expect(screen.queryByText('Invited, not joined yet')).toBeNull()
   })
 
   it('changes a role', async () => {

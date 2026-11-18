@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -22,13 +23,24 @@ type User struct {
 	Role  string `json:"role"`
 }
 
-// UpsertUser records a login and refreshes the role from the token.
-func (s *Store) UpsertUser(ctx context.Context, sub, email, role string) (User, error) {
+// UpsertUser records a login and refreshes the role and the e-mail address
+// (with whether the provider verified it) from the token. When the address can
+// be trusted, any team invitations waiting for it are claimed.
+func (s *Store) UpsertUser(ctx context.Context, sub, email string, emailVerified bool, role string) (User, error) {
 	var u User
-	err := s.pool.QueryRow(ctx, `INSERT INTO users (oidc_sub, email, role) VALUES ($1, $2, $3)
-		ON CONFLICT (oidc_sub) DO UPDATE SET email = EXCLUDED.email, role = EXCLUDED.role, last_seen = now()
-		RETURNING id, oidc_sub, email, role`, sub, email, role).Scan(&u.ID, &u.Sub, &u.Email, &u.Role)
-	return u, mapErr(err)
+	err := s.pool.QueryRow(ctx, `INSERT INTO users (oidc_sub, email, email_verified, role) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (oidc_sub) DO UPDATE SET email = EXCLUDED.email, email_verified = EXCLUDED.email_verified,
+		  role = EXCLUDED.role, last_seen = now()
+		RETURNING id, oidc_sub, email, role`, sub, email, emailVerified, role).Scan(&u.ID, &u.Sub, &u.Email, &u.Role)
+	if err != nil {
+		return u, mapErr(err)
+	}
+	if (emailVerified || s.trustUnverifiedEmail.Load()) && strings.Contains(email, "@") {
+		if err := s.claimInvitations(ctx, u); err != nil {
+			return u, err
+		}
+	}
+	return u, nil
 }
 
 // Request statuses.

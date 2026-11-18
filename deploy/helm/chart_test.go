@@ -366,6 +366,17 @@ func TestSingleReplicaHasNoDisruptionBudget(t *testing.T) {
 	}
 }
 
+func TestUnverifiedEmailIsNotTrustedUnlessAskedFor(t *testing.T) {
+	r := render(t, "-f", minimal)
+	if _, ok := envOf(deployment(t, r).Spec.Template.Spec.Containers[0])["PLINTH_TRUST_UNVERIFIED_EMAIL"]; ok {
+		t.Error("unverified e-mail must not be trusted by default")
+	}
+	r = render(t, "-f", minimal, "--set", "config.oidc.trustUnverifiedEmail=true")
+	if envOf(deployment(t, r).Spec.Template.Spec.Containers[0])["PLINTH_TRUST_UNVERIFIED_EMAIL"].Value != "true" {
+		t.Error("trustUnverifiedEmail must reach the server")
+	}
+}
+
 func TestPlainHTTPIdentityProviderOnlyWhenAskedFor(t *testing.T) {
 	r := render(t, "-f", minimal, "--set-string", "config.oidc.issuer=http://idp.local:9100", "--set", "config.oidc.allowHttp=true")
 	if envOf(deployment(t, r).Spec.Template.Spec.Containers[0])["PLINTH_OIDC_ALLOW_HTTP"].Value != "true" {

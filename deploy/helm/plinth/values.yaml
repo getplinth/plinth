@@ -34,6 +34,11 @@ config:
     groupsClaim: groups
     # Permit an http:// issuer. For throwaway local testing only.
     allowHttp: false
+    # Treat e-mail addresses as proof of identity even when the provider does
+    # not say it verified them. Lets team invitations be claimed, and existing
+    # accounts be added by e-mail, without "email_verified". Leave off unless
+    # your provider only lets people sign in with addresses it controls.
+    trustUnverifiedEmail: false
   # Onboarding requests processed at the same time, per replica (1 to 32).
   workers: 2
 

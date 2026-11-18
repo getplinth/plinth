@@ -25,6 +25,12 @@ type Config struct {
 	GroupsClaim  string // token claim that lists groups
 
 	Workers int // concurrent request workers
+
+	// TrustUnverifiedEmail accepts e-mail addresses as proof of identity even
+	// when the identity provider does not say it verified them. This decides
+	// whether team invitations can be claimed and whether existing accounts can
+	// be added by e-mail. Off by default; see docs/api.md before turning it on.
+	TrustUnverifiedEmail bool
 }
 
 // Load reads and validates the environment. All problems are reported at once.
@@ -64,6 +70,13 @@ func load(get func(string) string) (Config, error) {
 			problems = append(problems, "PLINTH_OIDC_ISSUER must be https (PLINTH_OIDC_ALLOW_HTTP=true is for local testing only)")
 		}
 	}
+	if v := get("PLINTH_TRUST_UNVERIFIED_EMAIL"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			problems = append(problems, "PLINTH_TRUST_UNVERIFIED_EMAIL must be true or false")
+		}
+		c.TrustUnverifiedEmail = b
+	}
 	if v := get("PLINTH_WORKERS"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > 32 {
@@ -87,6 +100,6 @@ func valueOr(v, def string) string {
 
 // Redacted describes the configuration for logs, without secrets.
 func (c Config) Redacted() string {
-	return fmt.Sprintf("listen=%s issuer=%s audience=%s admin_group=%s workers=%d",
-		c.ListenAddr, c.OIDCIssuer, c.OIDCAudience, c.AdminGroup, c.Workers)
+	return fmt.Sprintf("listen=%s issuer=%s audience=%s admin_group=%s workers=%d trust_unverified_email=%v",
+		c.ListenAddr, c.OIDCIssuer, c.OIDCAudience, c.AdminGroup, c.Workers, c.TrustUnverifiedEmail)
 }

@@ -75,6 +75,7 @@ A new pod is started and ready before an old one stops (`maxUnavailable: 0`), a 
 | `config.oidc.issuer`, `config.oidc.audience` | required | identity provider and client id |
 | `config.oidc.adminGroup` / `groupsClaim` | `plinth-admins` / `groups` | who is an administrator |
 | `config.oidc.allowHttp` | `false` | accept an `http://` issuer (testing only) |
+| `config.oidc.trustUnverifiedEmail` | `false` | accept e-mail addresses the provider did not verify, for invitations and add-by-email (see [the API notes](api.md#teams)) |
 | `config.workers` | `2` | onboarding requests processed at once, per replica |
 | `database.existingSecret` (+ `existingSecretKey`) | required | Secret holding the PostgreSQL URL |
 | `database.url` | | alternative: the chart creates the Secret (the URL is then visible in `helm get values`) |

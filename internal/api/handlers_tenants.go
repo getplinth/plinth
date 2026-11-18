@@ -26,13 +26,20 @@ func (s *Server) listTenants(w http.ResponseWriter, r *http.Request, c caller) {
 // getTenant shows a team and its members to its members and to administrators.
 // Everyone else is told it does not exist.
 func (s *Server) getTenant(w http.ResponseWriter, r *http.Request, c caller) {
-	t, err := s.d.Store.GetTenant(r.Context(), r.PathValue("name"), c.ID)
+	name := r.PathValue("name")
+	role, err := s.d.Store.TenantRole(r.Context(), name, c.ID)
 	if err != nil {
 		s.storeError(w, err)
 		return
 	}
-	if t.Role == "" && !c.isAdmin() {
+	if role == "" && !c.isAdmin() {
 		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	// Who has been invited is for owners and administrators only.
+	t, err := s.d.Store.GetTenant(r.Context(), name, c.ID, c.isAdmin() || role == store.RoleOwner)
+	if err != nil {
+		s.storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, t)
@@ -65,12 +72,26 @@ func (s *Server) addMember(w http.ResponseWriter, r *http.Request, c caller) {
 		writeErr(w, http.StatusBadRequest, `role must be "owner" or "member"`)
 		return
 	}
-	m, err := s.d.Store.AddMember(r.Context(), r.PathValue("name"), actorOf(c), email, role)
+	res, err := s.d.Store.AddMember(r.Context(), r.PathValue("name"), actorOf(c), email, role)
 	if err != nil {
 		s.storeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, m)
+	if res.Member != nil { // they already had an account: added now
+		writeJSON(w, http.StatusCreated, res.Member)
+		return
+	}
+	// No account yet: invited. 202 because it takes effect when they sign in.
+	writeJSON(w, http.StatusAccepted, res.Invitation)
+}
+
+// revokeInvitation withdraws an open invitation.
+func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request, c caller) {
+	if err := s.d.Store.RevokeInvitation(r.Context(), r.PathValue("name"), actorOf(c), r.PathValue("id")); err != nil {
+		s.storeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) setMemberRole(w http.ResponseWriter, r *http.Request, c caller) {

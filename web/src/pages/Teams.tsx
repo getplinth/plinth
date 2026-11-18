@@ -40,7 +40,7 @@ export function TeamsPage() {
           <h2>You are not in a team yet</h2>
           <p>
             Request a project to create a team and become its owner. To join an existing team, ask one of its owners to add you.
-            They need the e-mail address you sign in with, and you must have signed in to Plinth once.
+            They only need the e-mail address you sign in with: if you have not signed in yet, you join automatically the first time you do.
           </p>
           <Link className="btn primary" to="/new">Request a project</Link>
         </div>

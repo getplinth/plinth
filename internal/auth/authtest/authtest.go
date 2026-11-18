@@ -107,6 +107,12 @@ type Claims struct {
 	Audience string        // default: this provider's audience
 	Expires  time.Duration // default 1h; negative = already expired
 	Nonce    string        // echoed into the token when set (authorization code flow)
+	// Unverified makes the token say the e-mail address was NOT verified.
+	// By default addresses are verified, like most providers' real users.
+	Unverified bool
+	// NoVerifiedClaim leaves the email_verified claim out altogether, as some
+	// providers do.
+	NoVerifiedClaim bool
 }
 
 // Token returns a signed token for the claims.
@@ -131,6 +137,9 @@ func (p *Provider) Token(c Claims) string {
 		IssuedAt: jwt.NewNumericDate(now), Expiry: jwt.NewNumericDate(now.Add(c.Expires)),
 	}
 	extra := map[string]any{"email": c.Email, "groups": c.Groups}
+	if !c.NoVerifiedClaim {
+		extra["email_verified"] = !c.Unverified
+	}
 	if c.Nonce != "" {
 		extra["nonce"] = c.Nonce
 	}

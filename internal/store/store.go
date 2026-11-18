@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -46,7 +47,19 @@ func (e ErrNamespaceTaken) Error() string {
 type Store struct {
 	pool *pgxpool.Pool
 	box  *crypto.Box
+	// trustUnverifiedEmail lets e-mail addresses count even when the identity
+	// provider did not say it verified them. Off by default, see
+	// SetTrustUnverifiedEmail.
+	trustUnverifiedEmail atomic.Bool
 }
+
+// SetTrustUnverifiedEmail makes Plinth accept an e-mail address as proof of
+// who someone is even when the token does not say the provider verified it.
+// Turn it on only if your identity provider guarantees that people cannot
+// choose an address they do not own (for example a corporate directory that
+// does not emit "email_verified"). It decides whether invitations are
+// claimed and whether an existing account can be added by e-mail.
+func (s *Store) SetTrustUnverifiedEmail(v bool) { s.trustUnverifiedEmail.Store(v) }
 
 // Open connects and verifies the connection. Call Migrate before use.
 func Open(ctx context.Context, url string, box *crypto.Box) (*Store, error) {

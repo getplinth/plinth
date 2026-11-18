@@ -85,3 +85,37 @@ func TestNewRequiresIssuerAndAudience(t *testing.T) {
 		t.Fatal("an unreachable issuer must fail at startup")
 	}
 }
+
+func TestEmailVerificationIsReportedHonestly(t *testing.T) {
+	p := authtest.New("plinth")
+	defer p.Close()
+	v := newVerifier(t, p)
+	ctx := context.Background()
+
+	cases := map[string]struct {
+		claims authtest.Claims
+		want   bool
+	}{
+		"verified":              {authtest.Claims{Sub: "a", Email: "a@example.test"}, true},
+		"unverified":            {authtest.Claims{Sub: "b", Email: "b@example.test", Unverified: true}, false},
+		"no claim at all":       {authtest.Claims{Sub: "c", Email: "c@example.test", NoVerifiedClaim: true}, false},
+		"no e-mail, only a sub": {authtest.Claims{Sub: "d"}, false},
+	}
+	for name, c := range cases {
+		id, err := v.Verify(ctx, p.Token(c.claims))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if id.EmailVerified != c.want {
+			t.Errorf("%s: EmailVerified = %v, want %v", name, id.EmailVerified, c.want)
+		}
+	}
+}
+
+func TestClaimTrueAcceptsWhatProvidersSend(t *testing.T) {
+	for v, want := range map[any]bool{true: true, false: false, "true": true, "TRUE": true, "false": false, "yes": false, nil: false, 1: false, "": false} {
+		if got := claimTrue(v); got != want {
+			t.Errorf("claimTrue(%#v) = %v, want %v", v, got, want)
+		}
+	}
+}

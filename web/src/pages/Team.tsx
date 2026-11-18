@@ -5,7 +5,7 @@ import { Banner, ConfirmButton, ErrorBanner, Field } from '../components'
 import { useAction, useLoad } from '../hooks'
 import { fullTime, relativeTime, sentence } from '../lib/format'
 import { useMe } from '../session'
-import type { Team, TeamMember, TeamRole } from '../types'
+import type { Invitation, Team, TeamMember, TeamRole } from '../types'
 import { RoleChip } from './Teams'
 
 function AddMember({ team, onAdded }: { team: string; onAdded: () => void }) {
@@ -13,8 +13,14 @@ function AddMember({ team, onAdded }: { team: string; onAdded: () => void }) {
   const [role, setRole] = useState<TeamRole>('member')
   const [done, setDone] = useState('')
   const sendFn = useCallback(async () => {
-    await api(`/tenants/${team}/members`, { method: 'POST', body: { email: email.trim(), role } })
-    setDone(`${email.trim()} was added.`)
+    const sent = email.trim()
+    const res = await api<TeamMember | Invitation>(`/tenants/${team}/members`, { method: 'POST', body: { email: sent, role } })
+    // An invitation (it has an expiry) means the person has not signed in yet.
+    setDone(
+      res && 'expires_at' in res
+        ? `${sent} has not signed in to Plinth yet. They are invited and join automatically when they sign in with this address. Plinth does not send e-mail, so tell them.`
+        : `${sent} was added.`,
+    )
     setEmail('')
     onAdded()
   }, [team, email, role, onAdded])
@@ -29,7 +35,7 @@ function AddMember({ team, onAdded }: { team: string; onAdded: () => void }) {
     <form className="panel" onSubmit={submit} noValidate>
       <h2>Add someone</h2>
       <p className="hint" style={{ marginBottom: 12 }}>
-        Use the e-mail address they sign in with. They must have signed in to Plinth at least once.
+        Use the e-mail address they sign in with. If they have not signed in to Plinth yet, they are invited and join the first time they sign in with a verified address.
       </p>
       <ErrorBanner message={add.error} details={add.details} />
       {done && <Banner kind="info">{done}</Banner>}
@@ -46,6 +52,29 @@ function AddMember({ team, onAdded }: { team: string; onAdded: () => void }) {
       </div>
       <button className="btn primary" disabled={add.busy || !email.trim()}>{add.busy ? 'Adding…' : 'Add to team'}</button>
     </form>
+  )
+}
+
+function InvitationRow({ team, inv, onChanged }: { team: string; inv: Invitation; onChanged: () => void }) {
+  const revokeFn = useCallback(async () => {
+    await api(`/tenants/${team}/invitations/${inv.id}`, { method: 'DELETE' })
+    onChanged()
+  }, [team, inv.id, onChanged])
+  const revoke = useAction(revokeFn)
+  return (
+    <tr>
+      <td data-label="Invited">
+        <span className="title">{inv.email}</span>
+        <div className="sub" title={fullTime(inv.created_at)}>
+          {inv.invited_by ? `invited by ${inv.invited_by}, ` : 'invited '}{relativeTime(inv.created_at)}; expires {fullTime(inv.expires_at)}
+        </div>
+      </td>
+      <td data-label="Role"><RoleChip role={inv.role} /></td>
+      <td data-label="Actions">
+        <ConfirmButton label="Revoke" confirmLabel="Confirm revoke" disabled={revoke.busy} onConfirm={() => void revoke.run()} />
+        {revoke.error && <p className="field-error" role="alert" style={{ marginTop: 6 }}>{sentence(revoke.error)}</p>}
+      </td>
+    </tr>
   )
 }
 
@@ -147,6 +176,22 @@ export function TeamPage() {
           </tbody>
         </table>
       </div>
+
+      {canManage && (team.invitations ?? []).length > 0 && (
+        <div className="panel flush">
+          <h2 style={{ padding: '16px 16px 0' }}>Invited, not joined yet</h2>
+          <table className="table">
+            <thead>
+              <tr><th scope="col">Invited</th><th scope="col">Role</th><th scope="col">Actions</th></tr>
+            </thead>
+            <tbody>
+              {(team.invitations ?? []).map((inv) => (
+                <InvitationRow key={inv.id} team={team.name} inv={inv} onChanged={reload} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {canManage && <AddMember team={team.name} onAdded={reload} />}
 

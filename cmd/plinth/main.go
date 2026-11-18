@@ -67,6 +67,10 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer st.Close()
+	st.SetTrustUnverifiedEmail(cfg.TrustUnverifiedEmail)
+	if cfg.TrustUnverifiedEmail {
+		log.Warn("PLINTH_TRUST_UNVERIFIED_EMAIL is on: e-mail addresses are trusted without the identity provider's verification")
+	}
 	if err := st.Migrate(ctx); err != nil {
 		return err
 	}

@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 )
@@ -26,7 +27,12 @@ const (
 type Identity struct {
 	Sub   string
 	Email string
-	Role  string
+	// EmailVerified is true only when the token has an e-mail address AND the
+	// identity provider says it checked that the person owns it
+	// ("email_verified"). Anything that grants access by e-mail address (such as
+	// team invitations) must rely on this and not on Email alone.
+	EmailVerified bool
+	Role          string
 }
 
 // Verifier validates tokens.
@@ -81,6 +87,7 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (Identity, error) {
 	}
 	if e, ok := claims["email"].(string); ok && e != "" {
 		id.Email = e
+		id.EmailVerified = claimTrue(claims["email_verified"])
 	} else if u, ok := claims["preferred_username"].(string); ok && u != "" {
 		id.Email = u
 	} else {
@@ -96,4 +103,16 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (Identity, error) {
 		}
 	}
 	return id, nil
+}
+
+// claimTrue reads a boolean claim. Most providers send a JSON boolean, a few
+// send the string "true". Missing or anything else is false.
+func claimTrue(v any) bool {
+	switch x := v.(type) {
+	case bool:
+		return x
+	case string:
+		return strings.EqualFold(x, "true")
+	}
+	return false
 }

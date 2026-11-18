@@ -87,6 +87,10 @@ spec:
             - name: PLINTH_OIDC_ALLOW_HTTP
               value: "true"
             {{- end }}
+            {{- if .Values.config.oidc.trustUnverifiedEmail }}
+            - name: PLINTH_TRUST_UNVERIFIED_EMAIL
+              value: "true"
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

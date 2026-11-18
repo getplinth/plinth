@@ -1117,8 +1117,8 @@ func TestTeams(t *testing.T) {
 			t.Errorf("adding twice: %d", code)
 		}
 		code, raw = add(alice, "team-t", "nobody@example.test", "member")
-		if code != 404 || !strings.Contains(raw, "signed in to Plinth yet") {
-			t.Errorf("a person who never signed in: %d %s", code, raw)
+		if code != 202 || !strings.Contains(raw, `"expires_at"`) || strings.Contains(raw, `"user_id"`) {
+			t.Errorf("a person who never signed in gets an invitation, not a membership: %d %s", code, raw)
 		}
 		if code, _ := add(alice, "team-t", "not-an-address", "member"); code != 400 {
 			t.Errorf("bad address: %d", code)
@@ -1415,12 +1415,318 @@ func TestTeamMembersMigrationKeepsExistingOwners(t *testing.T) {
 	if err := st.Migrate(ctx); err != nil { // applies 0003 on top of existing data
 		t.Fatal(err)
 	}
+	var verified bool
+	if err := conn.QueryRow(ctx, `SELECT email_verified FROM users WHERE id = $1`, owner).Scan(&verified); err != nil || verified {
+		t.Fatalf("existing accounts must not count as verified until they sign in again: %v %v", verified, err)
+	}
 	role, err := st.TenantRole(ctx, "legacy-team", owner)
 	if err != nil || role != store.RoleOwner {
 		t.Fatalf("the existing owner must stay an owner: role=%q err=%v", role, err)
 	}
-	tn, err := st.GetTenant(ctx, "legacy-team", owner)
+	tn, err := st.GetTenant(ctx, "legacy-team", owner, false)
 	if err != nil || len(tn.Members) != 1 || tn.Members[0].Email != "old@example.test" {
 		t.Fatalf("members after migration: %+v %v", tn.Members, err)
 	}
+}
+
+// ---- invitations ---------------------------------------------------------------------------------
+
+func TestInvitations(t *testing.T) {
+	e := newEnv(t)
+	alice, bob, carol := e.alice(), e.bob(), e.token("carol", "devs")
+
+	mk := func(kind, driver, name string, cfg map[string]string) {
+		e.expect(201, e.admin(), "POST", "/api/v1/integrations", map[string]any{"kind": kind, "driver": driver, "name": name, "config": cfg})
+	}
+	mk("gitsource", "fake", "git", map[string]string{"a": "b"})
+	mk("cluster", "fake", "cl", map[string]string{"name": "dev"})
+	e.expect(201, e.admin(), "POST", "/api/v1/blueprints", map[string]any{
+		"name": "open", "git_source": "git", "environments": []map[string]any{{"name": "dev", "cluster": "cl"}}})
+
+	tok := func(sub, email string, mod ...func(*authtest.Claims)) string {
+		c := authtest.Claims{Sub: sub, Email: email, Groups: []string{"devs"}}
+		for _, m := range mod {
+			m(&c)
+		}
+		return e.idp.Token(c)
+	}
+	unverified := func(c *authtest.Claims) { c.Unverified = true }
+	noClaim := func(c *authtest.Claims) { c.NoVerifiedClaim = true }
+	signIn := func(token string) { e.expect(200, token, "GET", "/api/v1/me", nil) }
+	submit := func(token, team, project string) int {
+		code, _, _ := e.call(token, "POST", "/api/v1/requests", fmt.Sprintf(`{"blueprint":"open","tenant":%q,"projects":[{"name":%q}]}`, team, project))
+		return code
+	}
+	invite := func(token, team, email, role string) (int, string) {
+		code, _, raw := e.call(token, "POST", "/api/v1/tenants/"+team+"/members", map[string]string{"email": email, "role": role})
+		return code, raw
+	}
+	invitations := func(token, team string) []any {
+		v, _ := e.expect(200, token, "GET", "/api/v1/tenants/"+team, nil)
+		list, _ := get(v, "invitations").([]any)
+		return list
+	}
+	roleIn := func(token, team string) string { // "" when not a member
+		v, _ := e.expect(200, token, "GET", "/api/v1/tenants", nil)
+		for _, tn := range v.([]any) {
+			if get(tn, "name") == team {
+				return get(tn, "role").(string)
+			}
+		}
+		return ""
+	}
+	count := func(q string, args ...any) string { return e.rawQuery(q, args...) }
+
+	signIn(alice)
+	signIn(bob)
+	signIn(carol)
+	if code := submit(alice, "inv-team", "app"); code != 202 {
+		t.Fatalf("create team: %d", code)
+	}
+	e.expect(201, alice, "POST", "/api/v1/tenants/inv-team/members", map[string]string{"email": "bob@example.test", "role": "member"})
+
+	t.Run("inviting someone who has not signed in records an invitation", func(t *testing.T) {
+		code, raw := invite(alice, "inv-team", "  Newbie@Example.TEST ", "member")
+		if code != 202 {
+			t.Fatalf("invite: %d %s", code, raw)
+		}
+		list := invitations(alice, "inv-team")
+		if len(list) != 1 || get(list[0], "email") != "newbie@example.test" || get(list[0], "role") != "member" ||
+			get(list[0], "invited_by") != "alice@example.test" {
+			t.Fatalf("invitations: %v", list)
+		}
+		// About 30 days to claim it.
+		life := count(`SELECT round(extract(epoch FROM (expires_at - created_at)) / 86400)::text FROM tenant_invitations LIMIT 1`)
+		if life != "30" {
+			t.Errorf("lifetime = %s days", life)
+		}
+		// Not a member yet, and only owners and administrators see who was invited.
+		if got := members(e, alice, "inv-team"); len(got) != 2 {
+			t.Errorf("an invitation is not a membership: %v", got)
+		}
+		if len(invitations(bob, "inv-team")) != 0 {
+			t.Error("a plain member must not see open invitations")
+		}
+		if len(invitations(e.admin(), "inv-team")) != 1 {
+			t.Error("administrators see open invitations")
+		}
+		// Inviting again renews it and can change the role; it stays one invitation.
+		if code, _ := invite(alice, "inv-team", "newbie@example.test", "owner"); code != 202 {
+			t.Fatalf("re-invite: %d", code)
+		}
+		list = invitations(alice, "inv-team")
+		if len(list) != 1 || get(list[0], "role") != "owner" {
+			t.Errorf("re-invitation: %v", list)
+		}
+	})
+
+	t.Run("it is claimed on the first sign-in with that address", func(t *testing.T) {
+		newbie := tok("newbie-sub", "NEWBIE@example.test") // verified by default
+		signIn(newbie)
+		if got := roleIn(newbie, "inv-team"); got != "owner" {
+			t.Fatalf("the invitee should be an owner now, got %q", got)
+		}
+		if n := len(invitations(alice, "inv-team")); n != 0 {
+			t.Errorf("the invitation must be used up: %d left", n)
+		}
+		if code := submit(newbie, "inv-team", "web"); code != 202 {
+			t.Errorf("the new member requesting for the team: %d", code)
+		}
+		// Nobody else gets in with it, and signing in again changes nothing.
+		signIn(newbie)
+		if got := members(e, alice, "inv-team"); len(got) != 3 {
+			t.Errorf("members: %v", got)
+		}
+	})
+
+	t.Run("an address the provider did not verify never claims an invitation", func(t *testing.T) {
+		invite(alice, "inv-team", "careful@example.test", "member")
+		invite(alice, "inv-team", "quiet@example.test", "member")
+		careful := tok("careful-sub", "careful@example.test", unverified)
+		quiet := tok("quiet-sub", "quiet@example.test", noClaim) // some providers send no claim at all
+		signIn(careful)
+		signIn(quiet)
+		if roleIn(careful, "inv-team") != "" || roleIn(quiet, "inv-team") != "" {
+			t.Fatal("an unverified address must not be able to claim an invitation")
+		}
+		if n := len(invitations(alice, "inv-team")); n != 2 {
+			t.Errorf("the invitations must stay open: %d", n)
+		}
+		// Once the provider verifies the address, the next sign-in joins.
+		signIn(tok("careful-sub", "careful@example.test"))
+		if roleIn(careful, "inv-team") != "member" {
+			t.Error("after verification the same person should be able to join")
+		}
+	})
+
+	t.Run("an attacker registering someone else's address gets nothing", func(t *testing.T) {
+		attacker := tok("attacker-sub", "victim@example.test", unverified)
+		signIn(attacker) // an account with the victim's address exists, unverified
+
+		code, raw := invite(alice, "inv-team", "victim@example.test", "owner")
+		if code != 202 {
+			t.Fatalf("the attacker's unverified account must not match: %d %s", code, raw)
+		}
+		if roleIn(attacker, "inv-team") != "" {
+			t.Fatal("the attacker was added")
+		}
+		e.expect(404, attacker, "GET", "/api/v1/tenants/inv-team", nil)
+
+		victim := tok("victim-sub", "victim@example.test")
+		signIn(victim)
+		if roleIn(victim, "inv-team") != "owner" {
+			t.Error("the real owner of the address should have joined")
+		}
+		signIn(attacker)
+		if roleIn(attacker, "inv-team") != "" {
+			t.Error("the attacker must not get in later either")
+		}
+	})
+
+	t.Run("with trust switched on, unverified addresses count", func(t *testing.T) {
+		e.st.SetTrustUnverifiedEmail(true)
+		defer e.st.SetTrustUnverifiedEmail(false)
+
+		invite(alice, "inv-team", "lenient@example.test", "member")
+		lenient := tok("lenient-sub", "lenient@example.test", unverified)
+		signIn(lenient)
+		if roleIn(lenient, "inv-team") != "member" {
+			t.Error("with PLINTH_TRUST_UNVERIFIED_EMAIL an unverified address should claim")
+		}
+		// An existing unverified account can now be added directly too.
+		signIn(tok("direct-sub", "direct@example.test", unverified))
+		if code, _ := invite(alice, "inv-team", "direct@example.test", "member"); code != 201 {
+			t.Errorf("adding an existing unverified account: %d", code)
+		}
+	})
+
+	t.Run("without trust, an existing unverified account is invited rather than added", func(t *testing.T) {
+		signIn(tok("shy-sub", "shy@example.test", unverified))
+		if code, _ := invite(alice, "inv-team", "shy@example.test", "member"); code != 202 {
+			t.Errorf("unverified account: %d", code)
+		}
+	})
+
+	t.Run("owners can revoke an invitation; nobody else can", func(t *testing.T) {
+		invite(alice, "inv-team", "late@example.test", "member")
+		list := invitations(alice, "inv-team")
+		var id string
+		for _, inv := range list {
+			if get(inv, "email") == "late@example.test" {
+				id = get(inv, "id").(string)
+			}
+		}
+		if id == "" {
+			t.Fatal("invitation not found")
+		}
+		e.expect(403, bob, "DELETE", "/api/v1/tenants/inv-team/invitations/"+id, nil)   // a member
+		e.expect(404, carol, "DELETE", "/api/v1/tenants/inv-team/invitations/"+id, nil) // an outsider
+		e.expect(204, alice, "DELETE", "/api/v1/tenants/inv-team/invitations/"+id, nil)
+		e.expect(404, alice, "DELETE", "/api/v1/tenants/inv-team/invitations/"+id, nil)
+		e.expect(404, alice, "DELETE", "/api/v1/tenants/inv-team/invitations/not-a-uuid", nil)
+
+		signIn(tok("late-sub", "late@example.test"))
+		if roleIn(tok("late-sub", "late@example.test"), "inv-team") != "" {
+			t.Error("a revoked invitation must not be claimable")
+		}
+	})
+
+	t.Run("an expired invitation grants nothing and disappears", func(t *testing.T) {
+		invite(alice, "inv-team", "stale@example.test", "member")
+		e.exec(`UPDATE tenant_invitations SET expires_at = now() - interval '1 minute' WHERE email = 'stale@example.test'`)
+		for _, inv := range invitations(alice, "inv-team") {
+			if get(inv, "email") == "stale@example.test" {
+				t.Error("an expired invitation is still listed")
+			}
+		}
+		stale := tok("stale-sub", "stale@example.test")
+		signIn(stale)
+		if roleIn(stale, "inv-team") != "" {
+			t.Error("an expired invitation must not be claimable")
+		}
+		if n := count(`SELECT count(*)::text FROM tenant_invitations WHERE email = 'stale@example.test'`); n != "0" {
+			t.Errorf("the expired invitation should be gone, %s left", n)
+		}
+	})
+
+	t.Run("only owners invite", func(t *testing.T) {
+		if code, raw := invite(bob, "inv-team", "x@example.test", "member"); code != 403 || !strings.Contains(raw, "only team owners") {
+			t.Errorf("a member inviting: %d %s", code, raw)
+		}
+		if code, _ := invite(carol, "inv-team", "x@example.test", "member"); code != 404 {
+			t.Errorf("an outsider inviting: %d", code)
+		}
+		if code, _ := invite(alice, "inv-team", "not-an-address", "member"); code != 400 {
+			t.Errorf("a bad address: %d", code)
+		}
+	})
+
+	t.Run("a team can only have so many open invitations", func(t *testing.T) {
+		if code := submit(alice, "inv-cap", "app"); code != 202 {
+			t.Fatal(code)
+		}
+		for i := 0; i < store.MaxOpenInvitations; i++ {
+			if code, raw := invite(alice, "inv-cap", fmt.Sprintf("person%d@example.test", i), "member"); code != 202 {
+				t.Fatalf("invitation %d: %d %s", i, code, raw)
+			}
+		}
+		code, raw := invite(alice, "inv-cap", "one-too-many@example.test", "member")
+		if code != 409 || !strings.Contains(raw, "50 open invitations") {
+			t.Errorf("past the cap: %d %s", code, raw)
+		}
+		if code, _ := invite(alice, "inv-cap", "person0@example.test", "owner"); code != 202 {
+			t.Errorf("renewing an existing invitation at the cap: %d", code)
+		}
+	})
+
+	t.Run("simultaneous sign-ins claim it exactly once", func(t *testing.T) {
+		invite(alice, "inv-team", "twice@example.test", "member")
+		twice := tok("twice-sub", "twice@example.test")
+		var wg sync.WaitGroup
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if code, _, _ := e.call(twice, "GET", "/api/v1/me", nil); code != 200 {
+					t.Errorf("sign-in: %d", code)
+				}
+			}()
+		}
+		wg.Wait()
+		if roleIn(twice, "inv-team") != "member" {
+			t.Fatal("not a member")
+		}
+		if n := count(`SELECT count(*)::text FROM audit_log WHERE action = 'tenant.invitation.accept' AND actor = 'twice@example.test'`); n != "1" {
+			t.Errorf("claimed %s times", n)
+		}
+		if n := count(`SELECT count(*)::text FROM tenant_members m JOIN users u ON u.id = m.user_id WHERE u.email = 'twice@example.test'`); n != "1" {
+			t.Errorf("memberships: %s", n)
+		}
+	})
+
+	t.Run("invitations are in the audit log", func(t *testing.T) {
+		v, raw := e.expect(200, e.admin(), "GET", "/api/v1/audit?limit=500", nil)
+		seen := map[string]bool{}
+		for _, ent := range v.([]any) {
+			seen[get(ent, "action").(string)] = true
+		}
+		for _, want := range []string{"tenant.invitation.create", "tenant.invitation.accept", "tenant.invitation.revoke"} {
+			if !seen[want] {
+				t.Errorf("no %s entry", want)
+			}
+		}
+		if !strings.Contains(raw, "late@example.test") || !strings.Contains(raw, "newbie@example.test") {
+			t.Error("the audit log should say whom it concerned")
+		}
+	})
+}
+
+// members lists a team's members as e-mail -> role, as seen by token.
+func members(e *env, token, team string) map[string]string {
+	v, _ := e.expect(200, token, "GET", "/api/v1/tenants/"+team, nil)
+	out := map[string]string{}
+	for _, m := range get(v, "members").([]any) {
+		out[get(m, "email").(string)] = get(m, "role").(string)
+	}
+	return out
 }

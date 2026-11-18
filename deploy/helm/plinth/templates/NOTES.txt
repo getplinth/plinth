@@ -25,6 +25,11 @@ Your identity provider must allow this client:
 
 WARNING: config.oidc.allowHttp is on. Use it for local testing only.
 {{- end }}
+{{- if .Values.config.oidc.trustUnverifiedEmail }}
+
+WARNING: config.oidc.trustUnverifiedEmail is on. Anyone who can sign in with an
+address the provider has not verified can claim invitations sent to it.
+{{- end }}
 {{- if or .Values.database.url .Values.masterKey.value }}
 
 NOTE: a value given inline is stored in this release's data and shown by

@@ -15,6 +15,7 @@ Plinth is a single binary: REST API plus background workers, backed by PostgreSQ
 | `PLINTH_WORKERS` | no | concurrent request workers, 1 to 32 (default 2) |
 | `PLINTH_LISTEN_ADDR` | no | default `:8080` |
 | `PLINTH_OIDC_ALLOW_HTTP` | no | `true` allows an `http` issuer (local testing only) |
+| `PLINTH_TRUST_UNVERIFIED_EMAIL` | no | `true` accepts e-mail addresses the provider did not mark `email_verified`, for team invitations and add-by-email. Off by default; see Teams |
 
 All configuration problems are reported together at startup, and secrets are never printed.
 
@@ -44,7 +45,8 @@ The role is refreshed from the token on every call, so removing someone from the
 | `POST /api/v1/requests` | user | submit `{blueprint, tenant, projects[]}`; returns `202` and the request |
 | `GET /api/v1/requests`, `GET /{id}` | user | your requests and your teams' (`?all=true` for admins; `?status=awaiting_approval` filters); status, per-step state, outputs, and the decision |
 | `GET /api/v1/tenants`, `GET /{name}` | user | teams you belong to (`?all=true` for admins), and one team with its members and projects |
-| `POST /api/v1/tenants/{name}/members` | owner, admin | add a person who has signed in, by e-mail (`email`, `role`) |
+| `POST /api/v1/tenants/{name}/members` | owner, admin | add a person by e-mail (`email`, `role`): `201` and the member if they have an account, `202` and an invitation if not |
+| `DELETE /api/v1/tenants/{name}/invitations/{id}` | owner, admin | revoke an open invitation (`204`) |
 | `PUT`, `DELETE /api/v1/tenants/{name}/members/{user}` | owner, admin (anyone can DELETE themselves) | change a role / remove or leave |
 | `POST /api/v1/requests/{id}/retry` | owner or admin | re-queue a failed request; finished steps are not repeated |
 | `POST /api/v1/requests/{id}/approve` | admin, never the requester | release a request that is awaiting approval (optional `note`) |
@@ -87,10 +89,12 @@ A team (tenant) has **owners** and **members**. The first request for a new team
 | Add, remove, change roles | yes | yes | no (403); can **leave** | no |
 | Approve a request | yes (not their own) | no | no | no |
 
-- **Adding people.** By e-mail address, compared without regard to case, and only people who have **signed in to Plinth at least once** (Plinth learns who someone is from their login). Otherwise the answer says to ask them to sign in first. If two accounts share one address it refuses (409) rather than guess.
+- **Adding people.** By e-mail address, compared without regard to case. Someone who already has an account is added at once (`201`). Someone who has never signed in gets an **invitation** (`202`): they join, with the invited role, the first time they sign in with that address. Plinth sends no e-mail, so tell them. If two accounts share one address it refuses (409) rather than guess.
+- **Invitations.** Open for 30 days, at most 50 per team, one per address (inviting again renews it and can change the role). Only owners and administrators see them. They can be revoked, and an expired one grants nothing.
+- **E-mail must be verified.** An address only counts when the identity provider says it verified it (`email_verified`). Otherwise anyone able to register an account with someone else's address at a permissive provider could claim their invitation. An unverified account is never matched by e-mail, so adding it creates an invitation instead; it joins once the provider verifies the address. If your provider only allows addresses it controls but omits the claim, set `PLINTH_TRUST_UNVERIFIED_EMAIL=true` (Helm: `config.oidc.trustUnverifiedEmail`); Plinth logs a warning at startup when it is on. Accounts that existed before invitations count as unverified until their next sign-in.
 - **A team always keeps an owner.** The last owner cannot be demoted, removed, or leave (409), not even by an administrator. Two owners removing each other at the same moment still leave one: changes lock the team.
 - **Leaving.** Ends access to the team and its requests. What you requested yourself stays visible to you, but you cannot retry or withdraw it any more.
-- **Everything is audited**: `tenant.create`, `tenant.member.add`, `.role`, `.remove`, `.leave`, with the e-mail addresses and roles involved.
+- **Everything is audited**: `tenant.create`, `tenant.member.add`, `.role`, `.remove`, `.leave`, `tenant.invitation.create`, `.accept`, `.revoke`, with the e-mail addresses and roles involved.
 - Existing teams keep their owner when upgrading (migration `0003`).
 
 ## Approval
