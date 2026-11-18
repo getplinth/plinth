@@ -12,6 +12,7 @@ Plinth is a single binary: REST API plus background workers, backed by PostgreSQ
 | `PLINTH_OIDC_AUDIENCE` | yes | client id the tokens are issued for |
 | `PLINTH_ADMIN_GROUP` | no | members of this group are administrators (default `plinth-admins`) |
 | `PLINTH_GROUPS_CLAIM` | no | token claim that lists groups (default `groups`) |
+| `PLINTH_MASTER_KEY_PREVIOUS` | no | former master key(s), comma separated, only while [rotating](#rotating-the-master-key). Read-only: nothing new is encrypted with them |
 | `PLINTH_WORKERS` | no | concurrent request workers, 1 to 32 (default 2) |
 | `PLINTH_LISTEN_ADDR` | no | default `:8080` |
 | `PLINTH_OIDC_ALLOW_HTTP` | no | `true` allows an `http` issuer (local testing only) |
@@ -118,13 +119,35 @@ A blueprint can be marked **needs approval** (`requires_approval`). Requests for
 - Strict JSON (unknown fields rejected), 1 MiB body limit, per-user rate limit on submit and retry (burst 5, 10 per minute), `no-store` and restrictive headers on all responses, and request logs that never contain tokens, bodies or query strings.
 - Every administrative change and request transition is written to the audit log. Details never contain secrets.
 
+## Rotating the master key
+
+Rotate the key when it may have leaked, when someone who knew it leaves, or on a schedule. Plinth uses envelope encryption: each stored credential has its own data key, and the master key only wraps that data key. Rotation therefore re-wraps the small data keys and never touches the encrypted values. It runs while Plinth keeps serving requests, can be repeated, and can be stopped at any point.
+
+```mermaid
+flowchart LR
+  A["1. Create a new key<br/>plinth genkey"] --> B["2. Roll out<br/>MASTER_KEY = new<br/>MASTER_KEY_PREVIOUS = old"]
+  B --> C["3. Move the data<br/>plinth rekey"]
+  C --> D{"plinth keys:<br/>everything on the<br/>new key?"}
+  D -- no --> C
+  D -- yes --> E["4. Roll out again<br/>without PREVIOUS"]
+  E --> F["5. Destroy the old key"]
+```
+
+1. **Create a key**: `plinth genkey`. Store it where you keep the current one.
+2. **Roll out both keys** to every instance: `PLINTH_MASTER_KEY` is the new key and `PLINTH_MASTER_KEY_PREVIOUS` the old one. Instances still on the old key keep working during the rollout, and from now on new and changed credentials use the new key. Do not go on until every instance runs the new configuration: an instance that only knows the old key cannot read what is written with the new one (it says which key is missing).
+3. **Move the existing credentials** with the same environment: `plinth rekey` (`--dry-run` shows what would change). Each record is replaced only if it did not change meanwhile, so it is safe next to live traffic and to a second run. A record that cannot be read, for example because its key was left out, is reported and left as it is while the others still move; the command then exits with an error.
+4. **Check** with `plinth keys`, which lists how many records use each key and warns about any key that is not configured. When everything is on the new key, roll out again without `PLINTH_MASTER_KEY_PREVIOUS`. At startup Plinth also logs a warning while any record is not on the current key, and an info line when the old key can be removed.
+5. **Destroy the old key** everywhere, including backups of the secret store. Old database backups are still encrypted with the old key, so keep it for as long as you may restore one of them.
+
+`plinth keys` and `plinth rekey` need only `PLINTH_DATABASE_URL` and the keys, not the identity provider. In Kubernetes run them as a one-off Job or `kubectl exec` in a running pod. Keys are identified in output by a short fingerprint that does not reveal them. Credentials written before this feature are read as they are and get a key id the first time they are re-wrapped.
+
 ## Web interface
 
 The server also serves the web app for every non-API path; see [ui.md](ui.md). Public endpoints for it: `GET /api/v1/config` returns the identity provider and client id the browser signs in with. Admins also have `GET /api/v1/drivers` (the drivers compiled in).
 
 ## Not built yet
 
-Approval step for sensitive blueprints, tenant members beyond the owner, quota tier management endpoints, releasing a name reserved by a request that never succeeded, and a Helm chart.
+Quota tier management endpoints and releasing a name reserved by a request that never succeeded.
 
 ## Tests
 

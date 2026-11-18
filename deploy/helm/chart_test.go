@@ -366,6 +366,19 @@ func TestSingleReplicaHasNoDisruptionBudget(t *testing.T) {
 	}
 }
 
+func TestPreviousMasterKeyOnlyWhileRotating(t *testing.T) {
+	c := func(args ...string) map[string]corev1.EnvVar {
+		return envOf(deployment(t, render(t, append([]string{"-f", minimal}, args...)...)).Spec.Template.Spec.Containers[0])
+	}
+	if _, ok := c()["PLINTH_MASTER_KEY_PREVIOUS"]; ok {
+		t.Error("no previous key unless asked for")
+	}
+	env := c("--set-string", "masterKey.previous.existingSecret=old-key")["PLINTH_MASTER_KEY_PREVIOUS"]
+	if env.Value != "" || env.ValueFrom == nil || env.ValueFrom.SecretKeyRef.Name != "old-key" || env.ValueFrom.SecretKeyRef.Key != "master-key-previous" {
+		t.Errorf("the previous key must come from a Secret, never inline: %+v", env)
+	}
+}
+
 func TestUnverifiedEmailIsNotTrustedUnlessAskedFor(t *testing.T) {
 	r := render(t, "-f", minimal)
 	if _, ok := envOf(deployment(t, r).Spec.Template.Spec.Containers[0])["PLINTH_TRUST_UNVERIFIED_EMAIL"]; ok {

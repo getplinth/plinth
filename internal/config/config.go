@@ -18,6 +18,11 @@ type Config struct {
 	// base64. Generate one with `plinth genkey`. In production inject it from
 	// a KMS or secret manager, never commit it.
 	MasterKey string
+	// MasterKeyPrevious are former master keys, kept only so data encrypted
+	// with them can still be read while rotating (comma separated in the
+	// environment). New data never uses them. Remove them once `plinth keys`
+	// shows nothing is encrypted with them any more.
+	MasterKeyPrevious []string
 
 	OIDCIssuer   string // identity provider issuer URL
 	OIDCAudience string // client id the tokens are issued for
@@ -35,19 +40,26 @@ type Config struct {
 
 // Load reads and validates the environment. All problems are reported at once.
 func Load() (Config, error) {
-	return load(os.Getenv)
+	return load(os.Getenv, true)
 }
 
-func load(get func(string) string) (Config, error) {
+// LoadStorage reads only what maintenance commands (such as `plinth rekey`)
+// need: the database and the master keys. The identity provider is not required.
+func LoadStorage() (Config, error) {
+	return load(os.Getenv, false)
+}
+
+func load(get func(string) string, full bool) (Config, error) {
 	c := Config{
-		ListenAddr:   valueOr(get("PLINTH_LISTEN_ADDR"), ":8080"),
-		DatabaseURL:  get("PLINTH_DATABASE_URL"),
-		MasterKey:    get("PLINTH_MASTER_KEY"),
-		OIDCIssuer:   get("PLINTH_OIDC_ISSUER"),
-		OIDCAudience: get("PLINTH_OIDC_AUDIENCE"),
-		AdminGroup:   valueOr(get("PLINTH_ADMIN_GROUP"), "plinth-admins"),
-		GroupsClaim:  valueOr(get("PLINTH_GROUPS_CLAIM"), "groups"),
-		Workers:      2,
+		ListenAddr:        valueOr(get("PLINTH_LISTEN_ADDR"), ":8080"),
+		DatabaseURL:       get("PLINTH_DATABASE_URL"),
+		MasterKey:         get("PLINTH_MASTER_KEY"),
+		MasterKeyPrevious: splitList(get("PLINTH_MASTER_KEY_PREVIOUS")),
+		OIDCIssuer:        get("PLINTH_OIDC_ISSUER"),
+		OIDCAudience:      get("PLINTH_OIDC_AUDIENCE"),
+		AdminGroup:        valueOr(get("PLINTH_ADMIN_GROUP"), "plinth-admins"),
+		GroupsClaim:       valueOr(get("PLINTH_GROUPS_CLAIM"), "groups"),
+		Workers:           2,
 	}
 	var problems []string
 	need := func(v, name string) {
@@ -57,10 +69,12 @@ func load(get func(string) string) (Config, error) {
 	}
 	need(c.DatabaseURL, "PLINTH_DATABASE_URL")
 	need(c.MasterKey, "PLINTH_MASTER_KEY")
-	need(c.OIDCIssuer, "PLINTH_OIDC_ISSUER")
-	need(c.OIDCAudience, "PLINTH_OIDC_AUDIENCE")
+	if full {
+		need(c.OIDCIssuer, "PLINTH_OIDC_ISSUER")
+		need(c.OIDCAudience, "PLINTH_OIDC_AUDIENCE")
+	}
 
-	if c.OIDCIssuer != "" {
+	if full && c.OIDCIssuer != "" {
 		u, err := url.Parse(c.OIDCIssuer)
 		allowHTTP, _ := strconv.ParseBool(get("PLINTH_OIDC_ALLOW_HTTP"))
 		switch {
@@ -91,6 +105,10 @@ func load(get func(string) string) (Config, error) {
 	return c, nil
 }
 
+func splitList(s string) []string {
+	return strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == '\n' || r == '\t' || r == '\r' })
+}
+
 func valueOr(v, def string) string {
 	if v == "" {
 		return def
@@ -100,6 +118,6 @@ func valueOr(v, def string) string {
 
 // Redacted describes the configuration for logs, without secrets.
 func (c Config) Redacted() string {
-	return fmt.Sprintf("listen=%s issuer=%s audience=%s admin_group=%s workers=%d trust_unverified_email=%v",
-		c.ListenAddr, c.OIDCIssuer, c.OIDCAudience, c.AdminGroup, c.Workers, c.TrustUnverifiedEmail)
+	return fmt.Sprintf("listen=%s issuer=%s audience=%s admin_group=%s workers=%d trust_unverified_email=%v previous_master_keys=%d",
+		c.ListenAddr, c.OIDCIssuer, c.OIDCAudience, c.AdminGroup, c.Workers, c.TrustUnverifiedEmail, len(c.MasterKeyPrevious))
 }

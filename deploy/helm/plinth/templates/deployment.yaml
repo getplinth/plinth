@@ -73,6 +73,13 @@ spec:
                 secretKeyRef:
                   name: {{ include "plinth.masterKeySecretName" . }}
                   key: {{ include "plinth.masterKeySecretKey" . }}
+            {{- if .Values.masterKey.previous.existingSecret }}
+            - name: PLINTH_MASTER_KEY_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.masterKey.previous.existingSecret }}
+                  key: {{ .Values.masterKey.previous.existingSecretKey }}
+            {{- end }}
             - name: PLINTH_OIDC_ISSUER
               value: {{ .Values.config.oidc.issuer | quote }}
             - name: PLINTH_OIDC_AUDIENCE

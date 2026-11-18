@@ -81,6 +81,7 @@ A new pod is started and ready before an old one stops (`maxUnavailable: 0`), a 
 | `database.url` | | alternative: the chart creates the Secret (the URL is then visible in `helm get values`) |
 | `masterKey.existingSecret` (+ `existingSecretKey`) | required | Secret holding the master key |
 | `masterKey.value` | | alternative: inline (visible in `helm get values`) |
+| `masterKey.previous.existingSecret` (+ `existingSecretKey`, default `master-key-previous`) | | Secret holding the former key, only while [rotating](api.md#rotating-the-master-key) |
 | `replicaCount` | `2` | replicas; they share the work through the database |
 | `image.repository`, `tag`, `digest` | `ghcr.io/getplinth/plinth`, appVersion | pin a `digest` for reproducible installs |
 | `ingress.*` | off | class, annotations, `hosts`, `tls` |
@@ -109,7 +110,7 @@ The full list, with comments, is in [`values.yaml`](../deploy/helm/plinth/values
 | Health | `/healthz` (process up), `/readyz` (database answers). A replica that loses the database leaves the Service and is not restarted. |
 | Logs | JSON on stdout. They never contain tokens, bodies, query strings or secrets. |
 | Back up | the PostgreSQL database **and** the master key, separately. Either alone is useless for restoring integrations. |
-| Master key | there is no rotation yet. Treat the key as long-lived and protect it. |
+| Master key | rotate without downtime, see [Rotating the master key](api.md#rotating-the-master-key): set `masterKey.previous.existingSecret`, upgrade, then `kubectl -n platform exec deploy/plinth -- plinth rekey`, check with `plinth keys`, and upgrade again without it. |
 | Scaling | add replicas for availability; raise `config.workers` for more simultaneous requests. |
 
 ## Tests
@@ -121,4 +122,4 @@ The full list, with comments, is in [`values.yaml`](../deploy/helm/plinth/values
 
 ## Not included
 
-A bundled database, a metrics endpoint with a `ServiceMonitor`, autoscaling (replicas are for availability, not load), master key rotation, and a published image: set `image.repository` to where you push yours.
+A bundled database, a metrics endpoint with a `ServiceMonitor`, autoscaling (replicas are for availability, not load), and a published image: set `image.repository` to where you push yours.

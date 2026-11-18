@@ -1730,3 +1730,163 @@ func members(e *env, token, team string) map[string]string {
 	}
 	return out
 }
+
+// ---- master key rotation --------------------------------------------------------------------------
+
+func TestMasterKeyRotation(t *testing.T) {
+	url := startPostgres(t)
+	ctx := context.Background()
+	keyA, _ := crypto.GenerateKey()
+	keyB, _ := crypto.GenerateKey()
+	keyC, _ := crypto.GenerateKey()
+
+	open := func(primary string, previous ...string) *store.Store {
+		t.Helper()
+		box, err := crypto.NewRing(primary, previous...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st, err := store.Open(ctx, url, box)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(st.Close)
+		return st
+	}
+	box := func(k string) string { b, _ := crypto.NewBox(k); return b.PrimaryID() }
+	idA, idB := box(keyA), box(keyB)
+
+	a := open(keyA)
+	if err := a.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	secrets := map[string]string{"git-1": "token-one", "git-2": "token-two", "git-3": "token-three"}
+	for name, tok := range secrets {
+		if _, err := a.CreateIntegration(ctx, "gitsource", "fake", name, map[string]string{"token": tok}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	usage := func(st *store.Store) map[string]int {
+		t.Helper()
+		u, err := st.KeyUsage(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	readable := func(st *store.Store, names ...string) error {
+		for _, n := range names {
+			_, cfg, err := st.IntegrationConfig(ctx, n)
+			if err != nil {
+				return err
+			}
+			if cfg["token"] != secrets[n] && n != "git-4" {
+				return fmt.Errorf("%s: wrong value %q", n, cfg["token"])
+			}
+		}
+		return nil
+	}
+	if u := usage(a); u[idA] != 3 || len(u) != 1 {
+		t.Fatalf("before rotation: %v", u)
+	}
+
+	// Step 1: roll out the new key, keeping the old one for reading.
+	b := open(keyB, keyA)
+	if err := readable(b, "git-1", "git-2", "git-3"); err != nil {
+		t.Fatalf("existing credentials must stay readable during rotation: %v", err)
+	}
+	secrets["git-4"] = "token-four"
+	if _, err := b.CreateIntegration(ctx, "gitsource", "fake", "git-4", map[string]string{"token": "token-four"}); err != nil {
+		t.Fatal(err)
+	}
+	if u := usage(b); u[idA] != 3 || u[idB] != 1 {
+		t.Fatalf("new records use the new key, old ones stay: %v", u)
+	}
+	if err := readable(a, "git-1"); err != nil {
+		t.Fatalf("instances still on the old key keep working until they are replaced: %v", err)
+	}
+	if err := readable(a, "git-4"); err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Errorf("a record on the new key is unreadable to the old key, and the error should say why: %v", err)
+	}
+
+	t.Run("a dry run changes nothing", func(t *testing.T) {
+		rep, err := b.Rekey(ctx, true)
+		if err != nil || rep.Total != 4 || rep.Rewrapped != 3 || rep.Current != 1 || len(rep.Failed) != 0 {
+			t.Fatalf("%+v %v", rep, err)
+		}
+		if u := usage(b); u[idA] != 3 {
+			t.Errorf("dry run wrote: %v", u)
+		}
+	})
+
+	t.Run("two rekeys at once move each record exactly once", func(t *testing.T) {
+		b2 := open(keyB, keyA)
+		var wg sync.WaitGroup
+		reps := make([]store.RekeyReport, 2)
+		for i, st := range []*store.Store{b, b2} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				rep, err := st.Rekey(ctx, false)
+				if err != nil {
+					t.Error(err)
+				}
+				reps[i] = rep
+			}()
+		}
+		wg.Wait()
+		if got := reps[0].Rewrapped + reps[1].Rewrapped; got != 3 {
+			t.Errorf("moved %d times for 3 records: %+v", got, reps)
+		}
+		if len(reps[0].Failed)+len(reps[1].Failed) != 0 {
+			t.Errorf("failures: %+v", reps)
+		}
+		if u := usage(b); u[idB] != 4 || len(u) != 1 {
+			t.Fatalf("after rekey: %v", u)
+		}
+	})
+
+	t.Run("afterwards the old key is not needed and rekeying again is a no-op", func(t *testing.T) {
+		only := open(keyB)
+		if err := readable(only, "git-1", "git-2", "git-3", "git-4"); err != nil {
+			t.Fatalf("the new key alone must be enough: %v", err)
+		}
+		rep, err := only.Rekey(ctx, false)
+		if err != nil || rep.Rewrapped != 0 || rep.Current != 4 {
+			t.Errorf("%+v %v", rep, err)
+		}
+		if err := readable(a, "git-1"); err == nil {
+			t.Error("the old key alone must no longer open anything")
+		}
+	})
+
+	t.Run("a missing key is reported, nothing is damaged, the rest still moves", func(t *testing.T) {
+		// Put one record back on key A, then run with a key ring that has lost A.
+		c := open(keyC, keyB, keyA)
+		if _, err := c.Rekey(ctx, false); err != nil { // everything to C
+			t.Fatal(err)
+		}
+		if _, err := a.CreateIntegration(ctx, "gitsource", "fake", "git-5", map[string]string{"token": "token-five"}); err != nil {
+			t.Fatal(err)
+		}
+		secrets["git-5"] = "token-five"
+		lost := open(keyC, keyB) // forgot key A
+		rep, err := lost.Rekey(ctx, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rep.Total != 5 || rep.Current != 4 || len(rep.Failed) != 1 || !strings.Contains(rep.Failed[0], "git-5") || !strings.Contains(rep.Failed[0], "PLINTH_MASTER_KEY_PREVIOUS") {
+			t.Fatalf("%+v", rep)
+		}
+		if u := usage(lost); u[idA] != 1 {
+			t.Errorf("the unreadable record must be left as it was: %v", u)
+		}
+		// With the key back, it moves.
+		if rep, err := c.Rekey(ctx, false); err != nil || rep.Rewrapped != 1 || len(rep.Failed) != 0 {
+			t.Errorf("%+v %v", rep, err)
+		}
+		if err := readable(c, "git-1", "git-2", "git-3", "git-4", "git-5"); err != nil {
+			t.Error(err)
+		}
+	})
+}

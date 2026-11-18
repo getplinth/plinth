@@ -62,6 +62,13 @@ masterKey:
   existingSecretKey: master-key
   # Alternative: give it here. It then appears in the release data.
   value: ""
+  # While rotating the key: a Secret holding the former key (or several,
+  # separated by commas). Plinth still reads what was encrypted with them but
+  # never writes with them. Remove it once `plinth keys` shows nothing is
+  # encrypted with the old key. See docs/api.md, "Rotating the master key".
+  previous:
+    existingSecret: ""
+    existingSecretKey: master-key-previous
 
 containerPort: 8080
 
