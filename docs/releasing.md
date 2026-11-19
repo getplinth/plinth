@@ -48,19 +48,26 @@ published for it; a published version is never reused: release the next patch in
 A fix for a reported vulnerability is developed in the private advisory's temporary fork, released as a patch version, and then
 published together with the advisory. See [SECURITY.md](../SECURITY.md).
 
-## Once, before the repository becomes public
+## Repository settings
 
-- [ ] The **licence** is Apache-2.0 ([LICENSE](../LICENSE), [NOTICE](../NOTICE)) and `make licenses` passes.
-- [ ] The repository lives in the `getplinth` organisation (transfer it, so the Go module path, the chart and the image names match),
-      with a description, topics and a social preview.
-- [ ] **Private vulnerability reporting** is on (Settings, Code security), so [SECURITY.md](../SECURITY.md) works. Also on: secret
-      scanning with push protection, Dependabot alerts, and the dependency graph.
-- [ ] **Branch protection** on `main`: pull requests with an approval, the `ci` jobs and the DCO check required, no force pushes.
-- [ ] **Discussions** are on (the issue templates link to them) and the labels `bug`, `enhancement`, `driver`, `dependencies`,
-      `security`, `good first issue` and `help wanted` exist.
-- [ ] **Packages** (`ghcr.io`) are allowed to be public for the organisation, so the image and chart can be pulled without sign-in.
-- [ ] The Renovate app is installed on the repository (its configuration is [renovate.json](../renovate.json)).
-- [ ] The **code of conduct contact** in [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) is a real address or channel you read.
-- [ ] You are entitled to publish the code: it belongs to you or you have your employer's permission, and no commit contains
-      anything that is not yours to publish (the history was scanned for secrets; see also your employer's policy).
-- [ ] The author name and e-mail address on the commits are the ones you want to be public (rewrite the history first if not).
+These are configured on `getplinth/plinth` (Settings), and are written down here so they can be checked and restored:
+
+- **Public**, in the `getplinth` organisation, licence detected as Apache-2.0, with a description and topics.
+- **Private vulnerability reporting**, **secret scanning with push protection**, and **Dependabot** alerts and security updates are on.
+  [SECURITY.md](../SECURITY.md) depends on the first.
+- **Ruleset "protect main"** on the default branch: no deletion, no force-push, changes only through a pull request with one approval and
+  resolved review threads, and the checks `go`, `web`, `helm`, `integration`, `repo` and `dco` must pass. Repository admins can bypass it, so
+  the owner can push fixes directly; use that sparingly, and prefer a pull request so CI runs first.
+- **Merging**: squash only, the branch is deleted after merge, and the squash keeps the commit messages (so sign-offs survive).
+- **Pull requests from outside contributors** do not run workflows until a maintainer approves the run. Workflows get a read-only token by default.
+- **Discussions** are on (the issue templates link to them) and the labels `driver`, `dependencies` and `security` exist next to GitHub's defaults.
+
+## Still to do by hand
+
+- [ ] Install the **Renovate** app on the `getplinth` organisation for this repository (its configuration is [renovate.json](../renovate.json)).
+- [ ] After the first release, make the **packages** on `ghcr.io` (the image and the chart) public so they can be pulled without signing in.
+- [ ] Put a real address or channel for **code of conduct** reports in [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md); today it uses private reporting.
+- [ ] Add a second maintainer when there is one, and then require review from code owners in the ruleset.
+
+The author name and e-mail address on the commits became public with the repository. Rewriting the history now would not remove copies that
+others have already fetched, so only do it if you must, and expect a force-push to need the admin bypass.
