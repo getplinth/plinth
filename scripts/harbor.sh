@@ -69,6 +69,12 @@ EOF
     -v "$dir/log":/var/log/harbor \
     "goharbor/prepare:$VERSION" prepare >&2
 
+  # The prepare container runs as root, so on Linux its files are owned by root and
+  # unreadable to the user who runs `docker compose` (on Docker Desktop the files look
+  # like yours). Make them world-readable from inside Docker; the stack is disposable and
+  # Harbor's own containers need to read them as another user anyway.
+  docker run --rm -v "$dir":/w alpine chmod -R a+rX /w/common >&2
+
   # Harbor's cache (Valkey/Redis) segfaults under QEMU emulation. On arm hosts
   # swap only that one service for a native multi-arch image; it is a plain
   # cache, so Harbor's API behaviour under test is unchanged. Compose merges
@@ -86,7 +92,13 @@ EOF
 
   echo "==> starting Harbor on port $port (first start pulls images)" >&2
   echo "$name" > "$dir/.project"
-  ( cd "$dir" && docker compose -p "$name" up -d >&2 )
+  if ! ( cd "$dir" && docker compose -p "$name" up -d >&2 ); then
+    # Harbor's compose file gives its containers fixed names, so a second Harbor cannot start
+    # while another exists (for example one from `make stack HARBOR=1`, even stopped).
+    echo "Harbor could not start. If another Harbor exists on this machine (harbor-core, harbor-db, ...), remove it first: scripts/stack.sh down" >&2
+    down "$dir"
+    return 1
+  fi
 
   echo "==> waiting for Harbor to become healthy" >&2
   local i

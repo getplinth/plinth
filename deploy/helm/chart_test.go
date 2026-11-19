@@ -612,9 +612,39 @@ func TestConfigurationProblemsAreExplained(t *testing.T) {
 			t.Errorf("%s: expected the chart to refuse this", c.name)
 			continue
 		}
-		if !strings.Contains(stderr, c.want) {
+		if !mentions(stderr, c.want) {
 			t.Errorf("%s: error should mention %q, got:\n%s", c.name, c.want, stderr)
 		}
+	}
+}
+
+// mentions reports whether a Helm error names a value. Schema errors are worded
+// by the Helm version in use: Helm 3 says "service.type: ...", Helm 4 says
+// "at '/service/type'". A want that starts with "/" is such a path and matches
+// either wording; anything else is plain text.
+func mentions(output, want string) bool {
+	if strings.Contains(output, want) {
+		return true
+	}
+	if strings.HasPrefix(want, "/") {
+		return strings.Contains(output, strings.ReplaceAll(strings.TrimPrefix(want, "/"), "/", "."))
+	}
+	return false
+}
+
+func TestMentionsAcceptsBothHelmWordings(t *testing.T) {
+	helm3 := "- config.workers: Must be less than or equal to 32"
+	helm4 := "- at '/config/workers': maximum: got 99, want 32"
+	for _, out := range []string{helm3, helm4} {
+		if !mentions(out, "/config/workers") {
+			t.Errorf("not recognised: %s", out)
+		}
+	}
+	if mentions("- config.replicas: bad", "/config/workers") || mentions("something else", "master key is required") {
+		t.Error("an unrelated message must not match")
+	}
+	if !mentions("the master key is required", "master key is required") {
+		t.Error("plain text still matches as it is")
 	}
 }
 
