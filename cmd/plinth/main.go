@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"os"
 	"os/signal"
@@ -25,6 +26,7 @@ import (
 	"github.com/getplinth/plinth/internal/auth"
 	"github.com/getplinth/plinth/internal/config"
 	"github.com/getplinth/plinth/internal/crypto"
+	"github.com/getplinth/plinth/internal/notify"
 	"github.com/getplinth/plinth/internal/orchestrator"
 	"github.com/getplinth/plinth/internal/store"
 	"github.com/getplinth/plinth/internal/worker"
@@ -86,6 +88,7 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	warnAboutOldKeys(ctx, log, st, len(cfg.MasterKeyPrevious))
+	dispatcher := notifier(cfg, st, log)
 	verifier, err := auth.New(ctx, auth.Config{
 		Issuer: cfg.OIDCIssuer, Audience: cfg.OIDCAudience,
 		AdminGroup: cfg.AdminGroup, GroupsClaim: cfg.GroupsClaim,
@@ -119,6 +122,14 @@ func run(log *slog.Logger) error {
 			Options: orchestrator.Options{MaxAttempts: 3, Backoff: 2 * time.Second},
 		}).Run(ctx, cfg.Workers)
 	}()
+
+	if dispatcher != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dispatcher.Run(ctx)
+		}()
+	}
 
 	go func() {
 		<-ctx.Done()
@@ -243,4 +254,30 @@ func maintain(cmd string, args []string) error {
 		fmt.Println("done: the previous keys are no longer needed once every instance has restarted without them")
 	}
 	return nil
+}
+
+// notifier switches on the configured notification channels and returns the
+// dispatcher that delivers them, or nil when neither is configured.
+func notifier(cfg config.Config, st *store.Store, log *slog.Logger) *notify.Dispatcher {
+	st.SetNotificationChannels(cfg.EmailEnabled(), cfg.WebhookEnabled())
+	if !cfg.EmailEnabled() && !cfg.WebhookEnabled() {
+		return nil
+	}
+	d := &notify.Dispatcher{Store: st, Log: log, PublicURL: cfg.PublicURL}
+	if cfg.EmailEnabled() {
+		from, _ := mail.ParseAddress(cfg.SMTPFrom) // validated when the configuration was loaded
+		d.Email = &notify.SMTP{Host: cfg.SMTPHost, Port: cfg.SMTPPort, Username: cfg.SMTPUsername, Password: cfg.SMTPPassword, From: *from, TLS: cfg.SMTPTLS}
+		log.Info("e-mail notifications are on", "server", cfg.SMTPHost, "tls", cfg.SMTPTLS)
+	}
+	if cfg.WebhookEnabled() {
+		d.Webhook = &notify.Webhook{URL: cfg.WebhookURL, Secret: cfg.WebhookSecret}
+		log.Info("webhook notifications are on", "signed", cfg.WebhookSecret != "")
+	}
+	if cfg.PublicURL == "" {
+		log.Warn("PLINTH_PUBLIC_URL is not set: notifications will not contain links")
+	}
+	if cfg.NotifyAllowInsecure {
+		log.Warn("PLINTH_NOTIFY_ALLOW_INSECURE is on: notifications may use unencrypted connections")
+	}
+	return d
 }

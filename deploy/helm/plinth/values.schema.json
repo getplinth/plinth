@@ -27,7 +27,34 @@
             "trustUnverifiedEmail": { "type": "boolean" }
           }
         },
-        "workers": { "type": "integer", "minimum": 1, "maximum": 32 }
+        "workers": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "publicUrl": { "type": "string", "pattern": "^(https?://.+)?$" }
+      }
+    },
+    "notifications": {
+      "type": "object",
+      "properties": {
+        "smtp": {
+          "type": "object",
+          "properties": {
+            "host": { "type": "string" },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "tls": { "enum": ["starttls", "tls", "none"] },
+            "from": { "type": "string" },
+            "existingSecret": { "type": "string" },
+            "usernameKey": { "type": "string", "minLength": 1 },
+            "passwordKey": { "type": "string", "minLength": 1 }
+          }
+        },
+        "webhook": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "urlKey": { "type": "string", "minLength": 1 },
+            "signingKey": { "type": "string", "minLength": 1 }
+          }
+        },
+        "allowInsecure": { "type": "boolean" }
       }
     },
     "database": {

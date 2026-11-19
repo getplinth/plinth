@@ -12,18 +12,21 @@ function AddMember({ team, onAdded }: { team: string; onAdded: () => void }) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<TeamRole>('member')
   const [done, setDone] = useState('')
+  const mailed = !!useMe().notify_email
   const sendFn = useCallback(async () => {
     const sent = email.trim()
     const res = await api<TeamMember | Invitation>(`/tenants/${team}/members`, { method: 'POST', body: { email: sent, role } })
     // An invitation (it has an expiry) means the person has not signed in yet.
     setDone(
       res && 'expires_at' in res
-        ? `${sent} has not signed in to Plinth yet. They are invited and join automatically when they sign in with this address. Plinth does not send e-mail, so tell them.`
+        ? `${sent} has not signed in to Plinth yet. They are invited and join automatically when they sign in with this address. ${
+            mailed ? 'They have been sent an e-mail.' : 'Plinth does not send e-mail here, so tell them.'
+          }`
         : `${sent} was added.`,
     )
     setEmail('')
     onAdded()
-  }, [team, email, role, onAdded])
+  }, [team, email, role, onAdded, mailed])
   const add = useAction(sendFn)
 
   const submit = async (e: FormEvent) => {

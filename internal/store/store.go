@@ -51,6 +51,8 @@ type Store struct {
 	// provider did not say it verified them. Off by default, see
 	// SetTrustUnverifiedEmail.
 	trustUnverifiedEmail atomic.Bool
+	// Which notification channels are configured, see SetNotificationChannels.
+	notifyEmail, notifyWebhook atomic.Bool
 }
 
 // SetTrustUnverifiedEmail makes Plinth accept an e-mail address as proof of

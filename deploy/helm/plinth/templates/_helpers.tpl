@@ -69,6 +69,13 @@ Secret you manage (recommended). Exactly one source must be chosen for each.
 {{- if .Values.masterKey.existingSecret -}}{{ .Values.masterKey.existingSecretKey }}{{- else -}}master-key{{- end -}}
 {{- end -}}
 
+{{/* Where people open Plinth: config.publicUrl, else the first TLS ingress host, else nothing. */}}
+{{- define "plinth.publicUrl" -}}
+{{- if .Values.config.publicUrl -}}{{ .Values.config.publicUrl | trimSuffix "/" }}
+{{- else if and .Values.ingress.enabled .Values.ingress.hosts .Values.ingress.tls -}}https://{{ first .Values.ingress.hosts }}
+{{- end -}}
+{{- end -}}
+
 {{/* Fail early, with a sentence that says what to set, instead of crash-looping later. */}}
 {{- define "plinth.validate" -}}
 {{- $oidc := .Values.config.oidc -}}
@@ -81,5 +88,9 @@ Secret you manage (recommended). Exactly one source must be chosen for each.
 {{- if not (or .Values.database.existingSecret .Values.database.url) -}}{{ fail "the database connection is required: set database.existingSecret (a Secret holding the PostgreSQL URL, recommended) or database.url" }}{{- end -}}
 {{- if and .Values.masterKey.existingSecret .Values.masterKey.value -}}{{ fail "set either masterKey.existingSecret or masterKey.value, not both" }}{{- end -}}
 {{- if not (or .Values.masterKey.existingSecret .Values.masterKey.value) -}}{{ fail "the master key is required: set masterKey.existingSecret (a Secret holding 32 random bytes, base64) or masterKey.value. Create one with `plinth genkey`. Losing it makes stored integrations unreadable." }}{{- end -}}
+{{- $n := .Values.notifications -}}
+{{- if and $n.smtp.host (not $n.smtp.from) -}}{{ fail "notifications.smtp.from is required with notifications.smtp.host: the sender address, for example Plinth <plinth@example.com>" }}{{- end -}}
+{{- if and (not $n.smtp.host) (or $n.smtp.from $n.smtp.existingSecret) -}}{{ fail "notifications.smtp.host is required when other notifications.smtp settings are given" }}{{- end -}}
+{{- if and (eq $n.smtp.tls "none") (not $n.allowInsecure) -}}{{ if $n.smtp.host }}{{ fail "notifications.smtp.tls=none sends mail and the password unencrypted: it also needs notifications.allowInsecure=true, and is for testing only" }}{{ end }}{{- end -}}
 {{- if and .Values.ingress.enabled (not .Values.ingress.hosts) -}}{{ fail "ingress.enabled needs at least one entry in ingress.hosts" }}{{- end -}}
 {{- end -}}

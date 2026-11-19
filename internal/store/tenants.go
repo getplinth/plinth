@@ -338,6 +338,11 @@ func (s *Store) AddMember(ctx context.Context, tenant string, a Actor, email, ro
 			Scan(&inv.ID, &inv.CreatedAt, &inv.ExpiresAt); err != nil {
 			return res, mapErr(err)
 		}
+		if err := s.enqueue(ctx, tx, EventInvitation, map[string]any{
+			"tenant": tenant, "email": email, "role": role, "invited_by": a.Email, "expires_at": inv.ExpiresAt,
+		}, email); err != nil {
+			return res, err
+		}
 		if err := audit(ctx, tx, a.Email, "tenant.invitation.create", tenant, map[string]any{"email": email, "role": role}); err != nil {
 			return res, err
 		}

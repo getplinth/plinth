@@ -10,7 +10,7 @@ let team: Team
 let teams: Team[] = []
 let failWith: string | undefined
 let inviteResponse: unknown
-let me = { id: 'u-alice', email: 'alice@example.test', role: 'user' as 'user' | 'admin' }
+let me: { id: string; email: string; role: 'user' | 'admin'; notify_email?: boolean } = { id: 'u-alice', email: 'alice@example.test', role: 'user' }
 
 vi.mock('../api', () => ({
   api: vi.fn(async (path: string, opts: { method?: string; body?: unknown } = {}) => {
@@ -98,7 +98,18 @@ describe('team page for an owner', () => {
     await user.type(await screen.findByLabelText('E-mail address'), 'new@example.test')
     await user.click(screen.getByRole('button', { name: 'Add to team' }))
     expect(await screen.findByText(/new@example.test has not signed in to Plinth yet/)).toBeInTheDocument()
-    expect(screen.getByText(/does not send e-mail/)).toBeInTheDocument()
+    expect(screen.getByText(/does not send e-mail here, so tell them/)).toBeInTheDocument()
+  })
+
+  it('says the invitation was mailed when Plinth can send e-mail', async () => {
+    me = { ...me, notify_email: true }
+    inviteResponse = { id: 'i1', email: 'new@example.test', role: 'member', created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 864e5).toISOString() }
+    const user = userEvent.setup()
+    open()
+    await user.type(await screen.findByLabelText('E-mail address'), 'new@example.test')
+    await user.click(screen.getByRole('button', { name: 'Add to team' }))
+    expect(await screen.findByText(/They have been sent an e-mail/)).toBeInTheDocument()
+    expect(screen.queryByText(/so tell them/)).toBeNull()
   })
 
   it('lists open invitations to owners and revokes one', async () => {

@@ -44,6 +44,7 @@ export function Layout() {
                 <NavLink to="/admin/integrations">Integrations</NavLink>
                 <NavLink to="/admin/blueprints">Blueprints</NavLink>
                 <NavLink to="/admin/tiers">Quota tiers</NavLink>
+                <NavLink to="/admin/notifications">Notifications</NavLink>
                 <NavLink to="/admin/audit">Audit log</NavLink>
               </>
             )}

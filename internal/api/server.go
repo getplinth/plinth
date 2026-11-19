@@ -105,6 +105,8 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/v1/requests/{id}/reject", s.admin(s.decide(store.DecisionReject)))
 	mux.Handle("POST /api/v1/requests/{id}/release", s.admin(s.decide(store.DecisionRelease)))
 	mux.Handle("GET /api/v1/audit", s.admin(s.listAudit))
+	mux.Handle("GET /api/v1/notifications", s.admin(s.listNotifications))
+	mux.Handle("POST /api/v1/notifications/test", s.admin(s.testNotification))
 	mux.Handle("GET /api/v1/drivers", s.admin(s.listDrivers))
 
 	if d.UI != nil {
@@ -254,6 +256,12 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ready"))
 }
 
+// me describes the caller, and whether Plinth can e-mail people (so the
+// interface can say whether an invitation was mailed or has to be passed on).
 func (s *Server) me(w http.ResponseWriter, r *http.Request, c caller) {
-	writeJSON(w, http.StatusOK, c.User)
+	email, _ := s.d.Store.NotificationChannels()
+	writeJSON(w, http.StatusOK, struct {
+		store.User
+		NotifyEmail bool `json:"notify_email"`
+	}{c.User, email})
 }

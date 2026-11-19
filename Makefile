@@ -44,7 +44,7 @@ lint:
 	@test -z "$$(gofmt -l .)" || (gofmt -l .; exit 1)
 
 demo: web ## try the web interface with simulated systems (needs Docker for PostgreSQL)
-	docker compose up -d --wait postgres
+	docker compose up -d --wait postgres mailpit
 	go run ./cmd/plinth-demo
 
 up:

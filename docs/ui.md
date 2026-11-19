@@ -13,6 +13,7 @@ Open <http://127.0.0.1:8080> and sign in as **Alice** or **Bob** (developers) or
 Things to try:
 - **Approval.** The `regulated` blueprint needs approval: ask for a project as Alice, then approve it as Root. Root cannot approve Root's own request; Ada can.
 - **Teams.** As Alice, request a project for a new team, add `bob@example.test` on the team page, then sign in as Bob and open Requests: the team's requests are there, and Bob can request for the team too. Add `newcomer@example.test` instead and the page says they are invited; they join when they first sign in with that address, and an owner can revoke the invitation before then.
+- **Notifications.** `make demo` also starts Mailpit. Open <http://127.0.0.1:8025> while you try the two flows above: administrators get *Approval needed*, the requester gets *Approved* or *Rejected* and then *Ready*, and the invited address gets its invitation. As Root, the Notifications page lists what was sent. (Sign each person in once first: administrators are only e-mailed after they have signed in.)
 
 For UI development run `make demo` in one terminal and `cd web && npm run dev` in another (the dev server proxies `/api` to the demo).
 
@@ -27,6 +28,7 @@ For UI development run `make demo` in one terminal and `cd web && npm run dev` i
 | Approvals | admins | requests waiting for a decision, what each would create, with Approve and Reject (a reason is required to reject); the navigation shows how many wait for you |
 | Integrations | admins | add, check, replace and delete connections to Git, registry, clusters and databases |
 | Blueprints | admins | combine integrations into what developers can request |
+| Notifications | admins | which channels are on, a **Send a test message** button, and the latest e-mails and webhook calls with their outcome and reason |
 | Quota tiers | admins | the sizes developers choose: namespace totals and per-container defaults |
 | Audit log | admins | who changed what |
 

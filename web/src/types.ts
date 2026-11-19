@@ -6,6 +6,8 @@ export interface Me {
   id: string
   email: string
   role: Role
+  /** True when Plinth can send e-mail, so invitations are mailed. */
+  notify_email?: boolean
 }
 
 export type StepStatus = 'pending' | 'running' | 'succeeded' | 'failed'
@@ -115,6 +117,23 @@ export interface AuditEntry {
 export interface Resources {
   cpu: string
   memory: string
+}
+
+export interface NotificationEntry {
+  id: number
+  channel: 'email' | 'webhook'
+  recipient?: string
+  event: string
+  state: 'waiting' | 'sent' | 'failed'
+  attempts: number
+  last_error?: string
+  created_at: string
+}
+
+export interface NotificationStatus {
+  email: boolean
+  webhook: boolean
+  recent: NotificationEntry[]
 }
 
 export interface QuotaTier {

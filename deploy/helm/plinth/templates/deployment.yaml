@@ -98,6 +98,51 @@ spec:
             - name: PLINTH_TRUST_UNVERIFIED_EMAIL
               value: "true"
             {{- end }}
+            {{- $n := .Values.notifications }}
+            {{- $public := include "plinth.publicUrl" . }}
+            {{- if $public }}
+            - name: PLINTH_PUBLIC_URL
+              value: {{ $public | quote }}
+            {{- end }}
+            {{- if $n.smtp.host }}
+            - name: PLINTH_SMTP_HOST
+              value: {{ $n.smtp.host | quote }}
+            - name: PLINTH_SMTP_PORT
+              value: {{ $n.smtp.port | quote }}
+            - name: PLINTH_SMTP_TLS
+              value: {{ $n.smtp.tls | quote }}
+            - name: PLINTH_SMTP_FROM
+              value: {{ $n.smtp.from | quote }}
+            {{- if $n.smtp.existingSecret }}
+            - name: PLINTH_SMTP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $n.smtp.existingSecret }}
+                  key: {{ $n.smtp.usernameKey }}
+            - name: PLINTH_SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $n.smtp.existingSecret }}
+                  key: {{ $n.smtp.passwordKey }}
+            {{- end }}
+            {{- end }}
+            {{- if $n.webhook.existingSecret }}
+            - name: PLINTH_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $n.webhook.existingSecret }}
+                  key: {{ $n.webhook.urlKey }}
+            - name: PLINTH_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $n.webhook.existingSecret }}
+                  key: {{ $n.webhook.signingKey }}
+                  optional: true
+            {{- end }}
+            {{- if $n.allowInsecure }}
+            - name: PLINTH_NOTIFY_ALLOW_INSECURE
+              value: "true"
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

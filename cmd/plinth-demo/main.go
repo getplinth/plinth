@@ -12,7 +12,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"os"
 	"os/signal"
@@ -27,6 +29,7 @@ import (
 	"github.com/getplinth/plinth/internal/auth/authtest"
 	"github.com/getplinth/plinth/internal/crypto"
 	"github.com/getplinth/plinth/internal/demo"
+	"github.com/getplinth/plinth/internal/notify"
 	"github.com/getplinth/plinth/internal/orchestrator"
 	"github.com/getplinth/plinth/internal/store"
 	"github.com/getplinth/plinth/internal/worker"
@@ -124,6 +127,21 @@ func run(log *slog.Logger) error {
 	}
 
 	var wg sync.WaitGroup
+	mailNote := ""
+	if conn, err := net.DialTimeout("tcp", "127.0.0.1:1025", time.Second); err == nil {
+		conn.Close()
+		// A local Mailpit is running: send e-mail notifications to it.
+		st.SetNotificationChannels(true, false)
+		from, _ := mail.ParseAddress("Plinth demo <plinth@example.test>")
+		d := &notify.Dispatcher{Store: st, Log: log, PublicURL: "http://" + appAddr,
+			Email: &notify.SMTP{Host: "127.0.0.1", Port: 1025, From: *from, TLS: notify.TLSNone}, Poll: time.Second}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d.Run(ctx)
+		}()
+		mailNote = "  Mail   http://127.0.0.1:8025 shows the notifications Plinth sends (invitations, approvals, results).\n"
+	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -141,8 +159,9 @@ func run(log *slog.Logger) error {
 		"  Open   http://%s\n"+
 		"  Sign in as Alice or Bob to request a project, or as Root or Ada to administer.\n"+
 		"  Try    the \"regulated\" blueprint waits for an administrator other than the requester.\n"+
-		"  Tip    a tenant name containing \"fail\" fails once so you can try Retry.\n\n"+
-		"Press Ctrl+C to stop.\n\n", appAddr)
+		"  Tip    a tenant name containing \"fail\" fails once so you can try Retry.\n"+
+		"%s\n"+
+		"Press Ctrl+C to stop.\n\n", appAddr, mailNote)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

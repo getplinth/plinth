@@ -36,3 +36,10 @@ deploy/helm/plinth/values.yaml:generic-connection-string-credentials:45
 docs/deploy.md:generic-connection-string-credentials:39
 deploy/helm/chart_test.go:generic-connection-string-credentials:295
 scripts/helm-e2e.sh:generic-connection-string-credentials:60
+
+# Notifications: code that passes configured values along (no literal secret) and
+# a placeholder login for the in-process fake mail server of a unit test.
+internal/notify/email.go:generic-password-rule:103
+cmd/plinth/main.go:generic-password-rule:269
+cmd/plinth/main.go:generic-password-rule:273
+internal/notify/notify_test.go:generic-password-rule:163

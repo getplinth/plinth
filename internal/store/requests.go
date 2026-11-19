@@ -185,6 +185,11 @@ func (s *Store) SubmitRequest(ctx context.Context, p Submit) (RequestRecord, err
 		}
 	}
 	_ = audit(ctx, tx, p.UserEmail, "request.submit", reqID, map[string]any{"tenant": tenant, "blueprint": p.Blueprint, "projects": len(p.Req.Projects), "needs_approval": needsApproval})
+	if needsApproval {
+		if err := s.notifyRequest(ctx, tx, EventAwaitingApproval, reqID); err != nil {
+			return RequestRecord{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return RequestRecord{}, err
 	}
@@ -295,10 +300,31 @@ func (s *Store) Finish(ctx context.Context, id string, runErr error) error {
 	if runErr != nil {
 		status, msg = StatusFailed, runErr.Error()
 	}
-	if _, err := s.pool.Exec(ctx, `UPDATE requests SET status = $2, error = $3, claimed_by = NULL, updated_at = now() WHERE id = $1`, id, status, msg); err != nil {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
 		return err
 	}
-	return s.Audit(ctx, "system", "request."+status, id, nil)
+	defer tx.Rollback(ctx)
+	var before string
+	if err := tx.QueryRow(ctx, `SELECT status FROM requests WHERE id = $1 FOR UPDATE`, id).Scan(&before); err != nil {
+		return mapErr(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE requests SET status = $2, error = $3, claimed_by = NULL, updated_at = now() WHERE id = $1`, id, status, msg); err != nil {
+		return err
+	}
+	if err := audit(ctx, tx, "system", "request."+status, id, nil); err != nil {
+		return err
+	}
+	if before != status { // a repeated Finish must not notify twice
+		event := EventSucceeded
+		if status == StatusFailed {
+			event = EventFailed
+		}
+		if err := s.notifyRequest(ctx, tx, event, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func isUUID(s string) bool {
@@ -437,6 +463,17 @@ func (s *Store) DecideRequest(ctx context.Context, id string, d Decision) (Reque
 		if err := freeNames(ctx, tx, id, tenantID); err != nil {
 			return RequestRecord{}, err
 		}
+	}
+	switch next {
+	case StatusPending:
+		err = s.notifyRequest(ctx, tx, EventApproved, id)
+	case StatusRejected:
+		err = s.notifyRequest(ctx, tx, EventRejected, id)
+	case StatusAbandoned:
+		err = s.notifyRequest(ctx, tx, EventAbandoned, id)
+	}
+	if err != nil {
+		return RequestRecord{}, err
 	}
 	if err := audit(ctx, tx, d.ActorEmail, "request."+d.Action, id, detail); err != nil {
 		return RequestRecord{}, err

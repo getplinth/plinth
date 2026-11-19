@@ -79,6 +79,11 @@ A new pod is started and ready before an old one stops (`maxUnavailable: 0`), a 
 | `config.workers` | `2` | onboarding requests processed at once, per replica |
 | `database.existingSecret` (+ `existingSecretKey`) | required | Secret holding the PostgreSQL URL |
 | `database.url` | | alternative: the chart creates the Secret (the URL is then visible in `helm get values`) |
+| `config.publicUrl` | | the address people open Plinth at, for links in notifications; defaults to the first ingress host when `ingress.tls` is set |
+| `notifications.smtp.host`, `.port`, `.tls`, `.from` | off, `587`, `starttls` | mail server for [notifications](api.md#notifications); `from` is required with `host` |
+| `notifications.smtp.existingSecret` (+ `usernameKey`, `passwordKey`) | | Secret with the mail login, if the server needs one |
+| `notifications.webhook.existingSecret` (+ `urlKey`, `signingKey`) | | Secret with the webhook address (key `url`) and optionally a signing key (key `signing-key`) |
+| `notifications.allowInsecure` | `false` | allow an `http` webhook and unencrypted mail (testing only) |
 | `masterKey.existingSecret` (+ `existingSecretKey`) | required | Secret holding the master key |
 | `masterKey.value` | | alternative: inline (visible in `helm get values`) |
 | `masterKey.previous.existingSecret` (+ `existingSecretKey`, default `master-key-previous`) | | Secret holding the former key, only while [rotating](api.md#rotating-the-master-key) |

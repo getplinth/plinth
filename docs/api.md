@@ -16,6 +16,13 @@ Plinth is a single binary: REST API plus background workers, backed by PostgreSQ
 | `PLINTH_WORKERS` | no | concurrent request workers, 1 to 32 (default 2) |
 | `PLINTH_LISTEN_ADDR` | no | default `:8080` |
 | `PLINTH_OIDC_ALLOW_HTTP` | no | `true` allows an `http` issuer (local testing only) |
+| `PLINTH_PUBLIC_URL` | no | the address people open Plinth at, for links in [notifications](#notifications). Without it messages carry no links |
+| `PLINTH_SMTP_HOST`, `_PORT`, `_FROM` | no | mail server for e-mail notifications; `_FROM` (a sender such as `Plinth <plinth@example.com>`) is required with the host. Port defaults to 587, or 465 with `_TLS=tls` |
+| `PLINTH_SMTP_TLS` | no | `starttls` (default: the connection must upgrade before anything is sent), `tls` (TLS from the start) or `none` (testing only) |
+| `PLINTH_SMTP_USERNAME`, `_PASSWORD` | no | mail server login; both or neither |
+| `PLINTH_WEBHOOK_URL` | no | receives every notification as JSON; must be `https` |
+| `PLINTH_WEBHOOK_SECRET` | no | signs webhook requests, see [Notifications](#notifications) |
+| `PLINTH_NOTIFY_ALLOW_INSECURE` | no | `true` allows an `http` webhook or public address and unencrypted mail, for local testing only |
 | `PLINTH_TRUST_UNVERIFIED_EMAIL` | no | `true` accepts e-mail addresses the provider did not mark `email_verified`, for team invitations and add-by-email. Off by default; see Teams |
 
 All configuration problems are reported together at startup, and secrets are never printed.
@@ -56,6 +63,8 @@ The role is refreshed from the token on every call, so removing someone from the
 | `POST /api/v1/requests/{id}/reject` | admin | refuse it; a `note` of at least 3 characters is required |
 | `POST /api/v1/requests/{id}/cancel` | owner or admin | withdraw a request that is awaiting approval |
 | `POST /api/v1/requests/{id}/release` | admin | give up a failed request and free its names; a `note` of at least 3 characters is required. Nothing it created is removed |
+| `GET /api/v1/notifications` | admin | which channels are on and the latest notifications with their state (`waiting`, `sent`, `failed`) and reason |
+| `POST /api/v1/notifications/test` | admin | queue a test message to every channel; the e-mail goes to you (`202`; `409` when no channel is configured) |
 | `GET /api/v1/audit` | admin | who did what |
 
 ## Request lifecycle
@@ -107,7 +116,7 @@ A team (tenant) has **owners** and **members**. The first request for a new team
 | Add, remove, change roles | yes | yes | no (403); can **leave** | no |
 | Approve a request | yes (not their own) | no | no | no |
 
-- **Adding people.** By e-mail address, compared without regard to case. Someone who already has an account is added at once (`201`). Someone who has never signed in gets an **invitation** (`202`): they join, with the invited role, the first time they sign in with that address. Plinth sends no e-mail, so tell them. If two accounts share one address it refuses (409) rather than guess.
+- **Adding people.** By e-mail address, compared without regard to case. Someone who already has an account is added at once (`201`). Someone who has never signed in gets an **invitation** (`202`): they join, with the invited role, the first time they sign in with that address. With [e-mail notifications](#notifications) on, the invitation is mailed to them; otherwise the owner has to tell them. If two accounts share one address it refuses (409) rather than guess.
 - **Invitations.** Open for 30 days, at most 50 per team, one per address (inviting again renews it and can change the role). Only owners and administrators see them. They can be revoked, and an expired one grants nothing.
 - **E-mail must be verified.** An address only counts when the identity provider says it verified it (`email_verified`). Otherwise anyone able to register an account with someone else's address at a permissive provider could claim their invitation. An unverified account is never matched by e-mail, so adding it creates an invitation instead; it joins once the provider verifies the address. If your provider only allows addresses it controls but omits the claim, set `PLINTH_TRUST_UNVERIFIED_EMAIL=true` (Helm: `config.oidc.trustUnverifiedEmail`); Plinth logs a warning at startup when it is on. Accounts that existed before invitations count as unverified until their next sign-in.
 - **A team always keeps an owner.** The last owner cannot be demoted, removed, or leave (409), not even by an administrator. Two owners removing each other at the same moment still leave one: changes lock the team.
@@ -134,6 +143,40 @@ A blueprint can be marked **needs approval** (`requires_approval`). Requests for
 - **Names are released.** While a request waits, the names it would create are reserved, as for any request. Rejecting or withdrawing it frees them.
 - **What was approved is what runs.** A request's content cannot be edited after submission. The blueprint, however, is read when the request runs, so changing a blueprint between approval and execution changes what is set up; review blueprint changes like any other change.
 - **Visibility.** Administrators list the queue with `GET /api/v1/requests?all=true&status=awaiting_approval`. The requester sees the state and the verdict on their own request.
+
+## Notifications
+
+Plinth can tell people what happened by **e-mail** and to a **webhook**. Both are optional and independent; with neither configured nothing is queued.
+
+```mermaid
+flowchart LR
+  E["Something happens<br/>invitation, approval,<br/>request finished"] --> T["Same database transaction:<br/>change + queued notification"]
+  T --> Q[("notification_outbox")]
+  Q --> D1["Dispatcher<br/>(replica 1)"]
+  Q --> D2["Dispatcher<br/>(replica 2)"]
+  D1 --> M["SMTP server"]
+  D1 --> W["Webhook"]
+  D2 --> M
+  D2 --> W
+  M -. "temporary error:<br/>retry with growing delay" .-> Q
+  W -. "5xx, 429, network:<br/>retry" .-> Q
+```
+
+| Event | E-mail goes to | Webhook |
+|---|---|---|
+| `invitation.created` | the invited address | yes |
+| `request.awaiting_approval` | every administrator except the requester | yes |
+| `request.approved`, `request.rejected` | the requester (a rejection carries the reason) | yes |
+| `request.succeeded`, `request.failed` | the requester (a failure names the step that stopped) | yes |
+| `request.abandoned` | nobody | yes |
+
+- **Nothing is lost, nothing is invented.** A notification is written in the same transaction as the change it reports, so a crash cannot drop it and a rolled-back change sends nothing. Dispatchers on any replica pick queued items up with a lease, so each is delivered by one at a time, and one whose dispatcher died is taken over. Delivery is *at least once*: a crash between sending and recording repeats it, so webhook receivers should deduplicate on `X-Plinth-Delivery`.
+- **Retries.** A temporary failure (network error, mail server 4xx, webhook 5xx, 408 or 429) is retried after 30 s, doubling up to an hour, at most 8 times. A refusal for good (mail server 5xx such as an unknown mailbox, webhook 4xx or a redirect) is not retried. Items that gave up stay visible, with the reason, in the *Notifications* page (`GET /notifications`) for 30 days; sent ones are removed after 7.
+- **What messages contain.** Who did what, the team, the projects and a link, plus a rejection reason. Never credentials, error text or anything a step produced: credentials are shown once on the request page. Text that came from people is stripped of line breaks, so a name cannot add mail headers.
+- **E-mail.** Plain UTF-8 text. `starttls` (default) refuses to send, and never sends the password, unless the server offers STARTTLS and its certificate is valid for the host; `tls` connects encrypted from the start; `none` needs `PLINTH_NOTIFY_ALLOW_INSECURE=true`. Messages are marked `Auto-Submitted: auto-generated`. A team owner can make Plinth mail an invitation to any address, limited to 50 open invitations per team, with a fixed text that names the inviter.
+- **Webhook.** `POST` of `{"id", "type", "time", "text", "data"}`; `text` is one line, so Slack-style incoming webhooks show something readable. With `PLINTH_WEBHOOK_SECRET`, each request has `X-Plinth-Timestamp` (unix seconds) and `X-Plinth-Signature: sha256=<hex>`, the HMAC-SHA256 of `<timestamp>.<body>`: verify it and reject old timestamps. Redirects are not followed, since that would send the signed body somewhere else. The address is administrator configuration, never user input, and is treated as a secret (it is not printed or logged).
+- **Trying it.** The *Notifications* page and `POST /notifications/test` send a test message to every channel. `make demo` starts a local Mailpit, so the demo's e-mails can be read at <http://127.0.0.1:8025>.
+- Audited: `notifications.test`.
 
 ## Security properties
 
@@ -173,7 +216,7 @@ The server also serves the web app for every non-API path; see [ui.md](ui.md). P
 
 ## Not built yet
 
-Notifications (nobody is e-mailed or messaged about invitations, approvals or failures).
+Notifications to other channels (chat apps with their own formats, SMS), per-person preferences and digests, and e-mail to team members about their team's requests.
 
 ## Tests
 

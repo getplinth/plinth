@@ -233,6 +233,35 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request, c caller) {
 	writeJSON(w, http.StatusOK, list)
 }
 
+// listNotifications shows which channels are on and what was queued lately,
+// so an administrator can see whether messages are leaving.
+func (s *Server) listNotifications(w http.ResponseWriter, r *http.Request, c caller) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	list, err := s.d.Store.ListNotifications(r.Context(), limit)
+	if err != nil {
+		s.storeError(w, err)
+		return
+	}
+	email, webhook := s.d.Store.NotificationChannels()
+	writeJSON(w, http.StatusOK, map[string]any{"email": email, "webhook": webhook, "recent": list})
+}
+
+// testNotification queues a test message on every configured channel; the
+// e-mail goes to the administrator who asked.
+func (s *Server) testNotification(w http.ResponseWriter, r *http.Request, c caller) {
+	email, webhook := s.d.Store.NotificationChannels()
+	if !email && !webhook {
+		writeErr(w, http.StatusConflict, "no notification channel is configured: set PLINTH_SMTP_HOST or PLINTH_WEBHOOK_URL")
+		return
+	}
+	if err := s.d.Store.QueueTest(r.Context(), c.Email); err != nil {
+		s.storeError(w, err)
+		return
+	}
+	s.audit(r.Context(), c, "notifications.test", "", nil)
+	w.WriteHeader(http.StatusAccepted)
+}
+
 // listDrivers lists the drivers compiled into this server, so the UI can
 // offer them when an administrator adds an integration.
 func (s *Server) listDrivers(w http.ResponseWriter, r *http.Request, c caller) {

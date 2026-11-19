@@ -366,6 +366,65 @@ func TestSingleReplicaHasNoDisruptionBudget(t *testing.T) {
 	}
 }
 
+func TestNotificationsOffByDefaultAndSecretsOnlyFromSecrets(t *testing.T) {
+	env := func(args ...string) map[string]corev1.EnvVar {
+		return envOf(deployment(t, render(t, append([]string{"-f", minimal}, args...)...)).Spec.Template.Spec.Containers[0])
+	}
+	for k := range env() {
+		if strings.HasPrefix(k, "PLINTH_SMTP_") || strings.HasPrefix(k, "PLINTH_WEBHOOK_") || k == "PLINTH_PUBLIC_URL" || k == "PLINTH_NOTIFY_ALLOW_INSECURE" {
+			t.Errorf("%s is set by default", k)
+		}
+	}
+	e := env("--set-string", "notifications.smtp.host=smtp.example.com", "--set-string", "notifications.smtp.from=Plinth <plinth@example.com>",
+		"--set-string", "notifications.smtp.existingSecret=mail-login", "--set-string", "notifications.webhook.existingSecret=hook",
+		"--set-string", "config.publicUrl=https://plinth.example.com/")
+	for k, want := range map[string]string{"PLINTH_SMTP_HOST": "smtp.example.com", "PLINTH_SMTP_PORT": "587", "PLINTH_SMTP_TLS": "starttls",
+		"PLINTH_SMTP_FROM": "Plinth <plinth@example.com>", "PLINTH_PUBLIC_URL": "https://plinth.example.com"} {
+		if e[k].Value != want {
+			t.Errorf("%s = %q, want %q", k, e[k].Value, want)
+		}
+	}
+	for k, secret := range map[string]string{"PLINTH_SMTP_USERNAME": "mail-login", "PLINTH_SMTP_PASSWORD": "mail-login", "PLINTH_WEBHOOK_URL": "hook", "PLINTH_WEBHOOK_SECRET": "hook"} {
+		ref := e[k].ValueFrom
+		if e[k].Value != "" || ref == nil || ref.SecretKeyRef.Name != secret {
+			t.Errorf("%s must come from the Secret %s, never inline: %+v", k, secret, e[k])
+		}
+	}
+	if !*e["PLINTH_WEBHOOK_SECRET"].ValueFrom.SecretKeyRef.Optional {
+		t.Error("the signing key is optional: a Secret without it means unsigned requests")
+	}
+	if e["PLINTH_SMTP_USERNAME"].ValueFrom.SecretKeyRef.Key != "username" || e["PLINTH_WEBHOOK_URL"].ValueFrom.SecretKeyRef.Key != "url" {
+		t.Error("default key names")
+	}
+	// The public address falls back to a TLS ingress host.
+	e = env("--set", "ingress.enabled=true", "--set", "ingress.hosts={plinth.example.com}", "--set", "ingress.tls[0].secretName=tls", "--set", "ingress.tls[0].hosts={plinth.example.com}")
+	if e["PLINTH_PUBLIC_URL"].Value != "https://plinth.example.com" {
+		t.Errorf("public url from ingress: %q", e["PLINTH_PUBLIC_URL"].Value)
+	}
+	if _, ok := env("--set", "ingress.enabled=true", "--set", "ingress.hosts={plinth.example.com}")["PLINTH_PUBLIC_URL"]; ok {
+		t.Error("an ingress without TLS must not claim an https address")
+	}
+}
+
+func TestNotificationSettingsAreChecked(t *testing.T) {
+	for name, c := range map[string]struct {
+		args []string
+		want string
+	}{
+		"host without sender":  {[]string{"--set-string", "notifications.smtp.host=smtp.example.com"}, "notifications.smtp.from is required"},
+		"sender without host":  {[]string{"--set-string", "notifications.smtp.from=plinth@example.com"}, "notifications.smtp.host is required"},
+		"unencrypted":          {[]string{"--set-string", "notifications.smtp.host=h", "--set-string", "notifications.smtp.from=a@b.c", "--set-string", "notifications.smtp.tls=none"}, "allowInsecure"},
+		"unknown tls mode":     {[]string{"--set-string", "notifications.smtp.tls=sometimes"}, "tls"},
+		"bad port":             {[]string{"--set", "notifications.smtp.port=70000"}, "port"},
+		"public url no scheme": {[]string{"--set-string", "config.publicUrl=plinth.example.com"}, "publicUrl"},
+	} {
+		_, out, err := helmTemplate(t, append([]string{"-f", minimal}, c.args...)...)
+		if err == nil || !strings.Contains(out, c.want) {
+			t.Errorf("%s: want an error containing %q, got err=%v out=%s", name, c.want, err, out)
+		}
+	}
+}
+
 func TestPreviousMasterKeyOnlyWhileRotating(t *testing.T) {
 	c := func(args ...string) map[string]corev1.EnvVar {
 		return envOf(deployment(t, render(t, append([]string{"-f", minimal}, args...)...)).Spec.Template.Spec.Containers[0])

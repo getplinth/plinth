@@ -41,6 +41,37 @@ config:
     trustUnverifiedEmail: false
   # Onboarding requests processed at the same time, per replica (1 to 32).
   workers: 2
+  # The address people open Plinth at, for links in notifications. Defaults to
+  # the first ingress host when ingress.tls is set. Without either, messages
+  # carry no links.
+  publicUrl: ""
+
+# Notifications about invitations, approvals and finished or failed requests.
+# Both channels are optional and independent. Messages say what happened and
+# link to the page; they never contain credentials or error text. Delivery is
+# queued in the database, retried with growing delays, and safe across replicas.
+notifications:
+  smtp:
+    # Mail server. Empty turns e-mail off.
+    host: ""
+    port: 587
+    # starttls (port 587, encryption required), tls (port 465) or none.
+    tls: starttls
+    # Sender, for example "Plinth <plinth@example.com>".
+    from: ""
+    # A Secret you manage holding the login, if the server needs one.
+    existingSecret: ""
+    usernameKey: username
+    passwordKey: password
+  webhook:
+    # A Secret you manage with the webhook address (often itself a secret, as
+    # with Slack) and optionally a key to sign requests with. Empty turns the
+    # webhook off. Requests carry X-Plinth-Signature when the signing key exists.
+    existingSecret: ""
+    urlKey: url
+    signingKey: signing-key
+  # Allow an http:// webhook and an unencrypted mail connection. Testing only.
+  allowInsecure: false
 
 # PostgreSQL holding Plinth's state. The chart does not run a database: use a
 # managed one or an operator, and back it up (it holds requests, blueprints and
