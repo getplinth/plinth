@@ -6,7 +6,7 @@ databases, secret stores) and bundle them into **blueprints**. Developers fill
 in one form; Plinth provisions the repository, registry project, namespace
 (with RBAC, quota and network policy) and database, then reports status.
 
-> Status: the engine, API and web interface work and are tested end to end against real systems. Try the interface with `make demo` (see [docs/ui.md](docs/ui.md)).
+> Status: the engine, API and web interface work and are tested end to end against real systems. Try the interface with `make demo` (see [docs/ui.md](docs/ui.md)), or run Plinth against real Gitea, Kubernetes, PostgreSQL, Mailpit (and optionally Harbor and Keycloak) with `make stack` (see [docs/stack.md](docs/stack.md)).
 
 ## Concepts
 
@@ -24,6 +24,7 @@ Docs: [architecture](docs/architecture.md) (Mermaid diagrams), [deploying on Kub
 
 ```bash
 make demo        # try the web interface with simulated systems
+make stack       # a complete local stack on real systems, kept running (HARBOR=1 KEYCLOAK=1 add more)
 make test        # Go and web unit tests
 make itest-app   # whole application on a disposable PostgreSQL (needs Docker)
 make itest       # all integration tests: application, Kubernetes, Postgres, Gitea, Harbor

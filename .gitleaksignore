@@ -58,3 +58,10 @@ web/src/pages/LocalUsers.tsx:generic-password-rule:41
 web/src/pages/LocalUsers.tsx:generic-password-rule:156
 internal/api/auth_integration_test.go:generic-password-rule:98
 internal/api/handlers_auth.go:generic-password-rule:106
+
+# Local stack: shell variable references to passwords the script generates at run
+# time into .stack/state.env (gitignored); no literal secret is in the script.
+scripts/stack.sh:generic-password-rule:92
+scripts/stack.sh:generic-password-rule:164
+scripts/stack.sh:generic-password-rule:249
+scripts/stack.sh:generic-connection-string-credentials:247

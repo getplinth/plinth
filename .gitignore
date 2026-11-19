@@ -8,3 +8,4 @@ web/dist/*
 coverage.out
 .itest/
 .demo/
+.stack/

@@ -1,4 +1,4 @@
-.PHONY: helm-test helm-e2e build web test itest itest-k8s itest-db itest-git itest-registry itest-app e2e lint run up down demo
+.PHONY: helm-test helm-e2e build web test itest itest-k8s itest-db itest-git itest-registry itest-app e2e lint run up down demo stack stack-status stack-stop stack-down
 
 web: ## build the web interface into web/dist (embedded by the next `go build`)
 	cd web && npm ci && npm run build
@@ -42,6 +42,18 @@ helm-e2e: ## install the chart on a throwaway k3d cluster and test it (slow; nee
 lint:
 	go vet ./...
 	@test -z "$$(gofmt -l .)" || (gofmt -l .; exit 1)
+
+stack: ## a complete local stack on real systems, kept running (HARBOR=1 and KEYCLOAK=1 add Harbor and Keycloak); see docs/stack.md
+	./scripts/stack.sh up
+
+stack-status: ## where the local stack runs and its credentials
+	./scripts/stack.sh status
+
+stack-stop: ## stop the local stack, keep its data
+	./scripts/stack.sh stop
+
+stack-down: ## delete the local stack and its data
+	./scripts/stack.sh down
 
 demo: web ## try the web interface with simulated systems (needs Docker for PostgreSQL)
 	docker compose up -d --wait postgres mailpit
