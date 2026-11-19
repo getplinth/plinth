@@ -7,6 +7,8 @@ package helm
 
 import (
 	"bytes"
+	"encoding/base64"
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
@@ -75,6 +77,19 @@ func one[T any](t *testing.T, r rendered, kind string) *T {
 	return &v
 }
 
+// chartSecret is the Secret holding inline database and master key values
+// (the first administrator's is separate).
+func chartSecret(t *testing.T, r rendered) *corev1.Secret {
+	t.Helper()
+	var list []*unstructured.Unstructured
+	for _, u := range r["Secret"] {
+		if u.GetName() != "plinth-admin" {
+			list = append(list, u)
+		}
+	}
+	return one[corev1.Secret](t, rendered{"Secret": list}, "Secret")
+}
+
 func deployment(t *testing.T, r rendered) *appsv1.Deployment {
 	return one[appsv1.Deployment](t, r, "Deployment")
 }
@@ -95,7 +110,11 @@ func TestMinimalInstallCreatesWhatIsNeededAndNothingElse(t *testing.T) {
 			t.Errorf("%s: got %d, want %d", kind, len(r[kind]), n)
 		}
 	}
-	for _, kind := range []string{"Secret", "Ingress", "NetworkPolicy", "ConfigMap", "ClusterRole", "ClusterRoleBinding", "Role", "RoleBinding"} {
+	// The only Secret is the first administrator's starting password.
+	if secrets := r["Secret"]; len(secrets) != 1 || secrets[0].GetName() != "plinth-admin" {
+		t.Errorf("a minimal install creates only the admin Secret, got %d", len(secrets))
+	}
+	for _, kind := range []string{"Ingress", "NetworkPolicy", "ConfigMap", "ClusterRole", "ClusterRoleBinding", "Role", "RoleBinding"} {
 		if len(r[kind]) != 0 {
 			t.Errorf("a minimal install must not create a %s", kind)
 		}
@@ -172,6 +191,83 @@ func TestSecretsAreReferencedNeverWrittenIntoThePod(t *testing.T) {
 		if ref := e.ValueFrom.SecretKeyRef; ref.Name != wantSecret[0] || ref.Key != wantSecret[1] {
 			t.Errorf("%s -> %s/%s, want %s/%s", name, ref.Name, ref.Key, wantSecret[0], wantSecret[1])
 		}
+	}
+}
+
+func TestNoIdentityProviderIsNeededAtInstall(t *testing.T) {
+	bare := []string{"--set-string", "database.existingSecret=plinth-database", "--set-string", "masterKey.existingSecret=plinth-master-key"}
+	r := render(t, bare...)
+	env := envOf(deployment(t, r).Spec.Template.Spec.Containers[0])
+	for _, k := range []string{"PLINTH_OIDC_ISSUER", "PLINTH_OIDC_AUDIENCE", "PLINTH_OIDC_NAME"} {
+		if _, ok := env[k]; ok {
+			t.Errorf("%s must not be set when no provider is configured at install", k)
+		}
+	}
+	if env["PLINTH_BOOTSTRAP_ADMIN_USERNAME"].Value != "admin" {
+		t.Errorf("the first administrator: %+v", env["PLINTH_BOOTSTRAP_ADMIN_USERNAME"])
+	}
+	// A provider given at install is still passed on, with its display name.
+	env = envOf(deployment(t, render(t, "-f", minimal, "--set-string", "config.oidc.name=Company SSO")).Spec.Template.Spec.Containers[0])
+	if env["PLINTH_OIDC_ISSUER"].Value != "https://idp.example.com" || env["PLINTH_OIDC_NAME"].Value != "Company SSO" {
+		t.Errorf("%+v %+v", env["PLINTH_OIDC_ISSUER"], env["PLINTH_OIDC_NAME"])
+	}
+}
+
+func TestTheFirstAdministratorsPasswordIsGeneratedIntoASecretAndNeverInThePod(t *testing.T) {
+	r := render(t, "-f", minimal)
+	secrets := r["Secret"]
+	var admin map[string]any
+	for _, s := range secrets {
+		if s.GetName() == "plinth-admin" {
+			admin = s.Object
+		}
+	}
+	if admin == nil {
+		t.Fatalf("no admin Secret among %d secrets", len(secrets))
+	}
+	data, _ := admin["data"].(map[string]any)
+	enc, _ := data["password"].(string)
+	raw, err := base64.StdEncoding.DecodeString(enc)
+	if err != nil || len(raw) != 20 {
+		t.Fatalf("a random 20 character password, got %q (%v)", raw, err)
+	}
+	if strings.Contains(strings.ToLower(string(raw)), "admin") {
+		t.Error("a generated password must not contain the username")
+	}
+	meta, _ := admin["metadata"].(map[string]any)
+	if ann, _ := meta["annotations"].(map[string]any); ann["helm.sh/resource-policy"] != "keep" {
+		t.Errorf("the Secret must survive an uninstall: %v", ann)
+	}
+	env := envOf(deployment(t, r).Spec.Template.Spec.Containers[0])["PLINTH_BOOTSTRAP_ADMIN_PASSWORD"]
+	if env.Value != "" || env.ValueFrom == nil || env.ValueFrom.SecretKeyRef.Name != "plinth-admin" || env.ValueFrom.SecretKeyRef.Key != "password" {
+		t.Errorf("the password must come from the Secret, never inline: %+v", env)
+	}
+	if strings.Contains(fmt.Sprint(deployment(t, r).Spec), string(raw)) {
+		t.Error("the password is written into the pod spec")
+	}
+	// Two renders differ (random), but a password you provide is used as it is.
+	own := envOf(deployment(t, render(t, "-f", minimal, "--set-string", "admin.existingSecret=my-admin", "--set-string", "admin.existingSecretKey=pw")).Spec.Template.Spec.Containers[0])["PLINTH_BOOTSTRAP_ADMIN_PASSWORD"]
+	if own.ValueFrom.SecretKeyRef.Name != "my-admin" || own.ValueFrom.SecretKeyRef.Key != "pw" {
+		t.Errorf("%+v", own)
+	}
+	for _, s := range render(t, "-f", minimal, "--set-string", "admin.existingSecret=my-admin")["Secret"] {
+		if s.GetName() == "plinth-admin" {
+			t.Error("no Secret is generated when one is provided")
+		}
+	}
+	// Switched off: no account is bootstrapped (use `plinth bootstrap-admin`).
+	off := envOf(deployment(t, render(t, "-f", minimal, "--set", "admin.create=false", "--set-string", "config.oidc.issuer=https://idp.example.com", "--set-string", "config.oidc.audience=plinth")).Spec.Template.Spec.Containers[0])
+	if _, ok := off["PLINTH_BOOTSTRAP_ADMIN_PASSWORD"]; ok {
+		t.Error("admin.create=false must not pass a password")
+	}
+}
+
+func TestRecoverySwitch(t *testing.T) {
+	if _, ok := envOf(deployment(t, render(t, "-f", minimal)).Spec.Template.Spec.Containers[0])["PLINTH_FORCE_LOCAL_LOGIN"]; ok {
+		t.Error("password sign-in is not forced by default")
+	}
+	if envOf(deployment(t, render(t, "-f", minimal, "--set", "config.forceLocalLogin=true")).Spec.Template.Spec.Containers[0])["PLINTH_FORCE_LOCAL_LOGIN"].Value != "true" {
+		t.Error("config.forceLocalLogin must reach the server")
 	}
 }
 
@@ -279,7 +375,7 @@ func TestInlineSecretsCreateASecretAndRollThePodsWhenTheyChange(t *testing.T) {
 			"--set-string", "database.url="+url, "--set-string", "masterKey.value=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	}
 	r := inline("postgres://u:p@db/plinth")
-	s := one[corev1.Secret](t, r, "Secret")
+	s := chartSecret(t, r)
 	if s.StringData["database-url"] != "postgres://u:p@db/plinth" || s.StringData["master-key"] == "" {
 		t.Errorf("secret data: %v", s.StringData)
 	}
@@ -300,7 +396,7 @@ func TestInlineSecretsCreateASecretAndRollThePodsWhenTheyChange(t *testing.T) {
 
 func TestMixingInlineAndExistingSecretsIsPossible(t *testing.T) {
 	r := render(t, "-f", minimal, "--set-string", "masterKey.existingSecret=", "--set-string", "masterKey.value=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	s := one[corev1.Secret](t, r, "Secret")
+	s := chartSecret(t, r)
 	if _, ok := s.StringData["database-url"]; ok || s.StringData["master-key"] == "" {
 		t.Errorf("only the inline value belongs in the chart's Secret: %v", s.StringData)
 	}
@@ -492,8 +588,11 @@ func TestConfigurationProblemsAreExplained(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"nothing set", nil, "config.oidc.issuer is required"},
+		{"nothing set", nil, "database connection is required"},
 		{"no audience", []string{"--set-string", "config.oidc.issuer=https://i.example.com", "--set-string", "database.existingSecret=d", "--set-string", "masterKey.existingSecret=m"}, "config.oidc.audience is required"},
+		{"audience without issuer", append(append([]string{}, ok...), "--set-string", "config.oidc.issuer=", "--set-string", "config.oidc.audience=plinth"), "config.oidc.issuer is required"},
+		{"nobody could sign in", append(append([]string{}, ok...), "--set-string", "config.oidc.issuer=", "--set-string", "config.oidc.audience=", "--set", "admin.create=false"), "nobody could sign in"},
+		{"bad admin username", append(append([]string{}, ok...), "--set-string", "admin.username=Admin User"), "username"},
 		{"plain http issuer", append(append([]string{}, ok...), "--set-string", "config.oidc.issuer=http://idp.example.com"), "must be https"},
 		{"two database sources", append(append([]string{}, ok...), "--set-string", "database.url=postgres://u:p@h/db"), "not both"},
 		{"no database", append(append([]string{}, ok...), "--set-string", "database.existingSecret="), "database connection is required"},

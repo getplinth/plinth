@@ -20,12 +20,7 @@ The chart does **not** run a database. Use a managed PostgreSQL or an operator, 
 ## Before you install
 
 1. **A PostgreSQL database** and a user that owns it. Plinth creates its tables at start.
-2. **An OpenID Connect client** for Plinth at your identity provider:
-   - public client, authorization code flow with PKCE (S256);
-   - redirect URI `https://<your Plinth address>/callback`;
-   - CORS allowed for that address on the discovery and token endpoints;
-   - a `groups` claim in the ID token, and a group for administrators (default `plinth-admins`).
-3. **Two Secrets** in the namespace you install into:
+2. **Two Secrets** in the namespace you install into:
 
 ```bash
 kubectl create namespace platform
@@ -43,8 +38,6 @@ kubectl -n platform create secret generic plinth-database \
 
 ```bash
 helm install plinth deploy/helm/plinth --namespace platform \
-  --set config.oidc.issuer=https://login.example.com/realms/platform \
-  --set config.oidc.audience=plinth \
   --set database.existingSecret=plinth-database \
   --set masterKey.existingSecret=plinth-master-key \
   --set ingress.enabled=true --set ingress.className=nginx \
@@ -53,6 +46,16 @@ helm install plinth deploy/helm/plinth --namespace platform \
 
 helm test plinth --namespace platform
 ```
+
+## Sign in for the first time
+
+No identity provider is needed to start. The chart generated a password for the first administrator, `admin`, into a Secret:
+
+```bash
+kubectl -n platform get secret plinth-admin -o jsonpath='{.data.password}' | base64 -d; echo
+```
+
+Open Plinth, sign in as `admin` with it, and choose a new password when asked (the starting one is then out of date). Then, under **Sign-in**, add your company's single sign-on: any OpenID Connect provider. At the provider register Plinth as a *public client* (authorization code flow with PKCE) with the redirect URI `https://<your Plinth address>/callback`, and give the provider's administrator group. Sign in once through it as an administrator; after that you may turn password sign-in off. Details and the way back in if the provider breaks are in [the API notes](api.md#authentication-and-roles).
 
 `helm test` checks health, the database connection, the sign-in settings, and that the API refuses anonymous callers. For anything beyond a try-out put your settings in a values file (see [`ci/full-values.yaml`](../deploy/helm/plinth/ci/full-values.yaml)).
 
@@ -72,7 +75,10 @@ A new pod is started and ready before an old one stops (`maxUnavailable: 0`), a 
 
 | Value | Default | Meaning |
 |---|---|---|
-| `config.oidc.issuer`, `config.oidc.audience` | required | identity provider and client id |
+| `admin.create`, `admin.username` | `true`, `admin` | create the first administrator at start (only on a fresh installation; an upgraded one is left alone, add an account with `plinth bootstrap-admin`); it must choose a new password at first sign-in |
+| `admin.existingSecret` (+ `existingSecretKey`, default `password`) | generated | Secret with the starting password. If empty the chart generates a random one into `<release>-admin`, keeps it across upgrades and uninstalls, and prints how to read it |
+| `config.forceLocalLogin` | `false` | keep password sign-in on whatever the control panel says: the way back in when an identity provider broke |
+| `config.oidc.issuer`, `config.oidc.audience`, `config.oidc.name` | none | optional identity provider fixed at install, shown read-only in the control panel. Both or neither; usually better to add providers in the control panel |
 | `config.oidc.adminGroup` / `groupsClaim` | `plinth-admins` / `groups` | who is an administrator |
 | `config.oidc.allowHttp` | `false` | accept an `http://` issuer (testing only) |
 | `config.oidc.trustUnverifiedEmail` | `false` | accept e-mail addresses the provider did not verify, for invitations and add-by-email (see [the API notes](api.md#teams)) |

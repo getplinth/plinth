@@ -33,7 +33,7 @@ func TestAllProblemsReportedTogether(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	for _, want := range []string{"PLINTH_DATABASE_URL", "PLINTH_MASTER_KEY", "PLINTH_OIDC_ISSUER", "PLINTH_OIDC_AUDIENCE"} {
+	for _, want := range []string{"PLINTH_DATABASE_URL", "PLINTH_MASTER_KEY"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("missing %s in %v", want, err)
 		}
@@ -208,5 +208,40 @@ func TestWebhookAndPublicURLSettings(t *testing.T) {
 	// Maintenance commands do not care about notification settings.
 	if _, err := load(env(map[string]string{"PLINTH_DATABASE_URL": "postgres://x", "PLINTH_MASTER_KEY": "k", "PLINTH_SMTP_FROM": "junk"}), false); err != nil {
 		t.Errorf("storage-only loading must ignore them: %v", err)
+	}
+}
+
+func TestAnIdentityProviderIsOptional(t *testing.T) {
+	m := map[string]string{"PLINTH_DATABASE_URL": "postgres://x", "PLINTH_MASTER_KEY": "key"}
+	c, err := load2(env(m))
+	if err != nil || c.OIDCIssuer != "" || c.BootstrapAdminUsername != "admin" || c.ForceLocalLogin {
+		t.Fatalf("no provider is fine, people sign in with a password: %+v %v", c, err)
+	}
+	m["PLINTH_OIDC_ISSUER"] = "https://idp.example.com"
+	if _, err := load2(env(m)); err == nil || !strings.Contains(err.Error(), "go together") {
+		t.Errorf("an issuer without a client id is a mistake: %v", err)
+	}
+	m["PLINTH_OIDC_AUDIENCE"] = "plinth"
+	m["PLINTH_OIDC_NAME"] = "Company SSO"
+	if c, err := load2(env(m)); err != nil || c.OIDCName != "Company SSO" {
+		t.Errorf("%+v %v", c, err)
+	}
+	delete(m, "PLINTH_OIDC_ISSUER")
+	if _, err := load2(env(m)); err == nil {
+		t.Error("a client id without an issuer is a mistake")
+	}
+}
+
+func TestBootstrapAndRecoverySettings(t *testing.T) {
+	m := valid()
+	m["PLINTH_BOOTSTRAP_ADMIN_USERNAME"] = "root"
+	m["PLINTH_BOOTSTRAP_ADMIN_PASSWORD"] = "a-very-secret-start"
+	m["PLINTH_FORCE_LOCAL_LOGIN"] = "true"
+	c, err := load2(env(m))
+	if err != nil || c.BootstrapAdminUsername != "root" || !c.ForceLocalLogin {
+		t.Fatalf("%+v %v", c, err)
+	}
+	if strings.Contains(c.Redacted(), "a-very-secret-start") || !strings.Contains(c.Redacted(), "force_local_login=true") {
+		t.Errorf("the bootstrap password must never be printed: %s", c.Redacted())
 	}
 }

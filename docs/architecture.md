@@ -13,7 +13,7 @@ flowchart LR
     D[Developer]
   end
   UI[Web UI]
-  API[API server<br/>OIDC + RBAC]
+  API[API server<br/>sign-in + RBAC]
   DB[(Postgres<br/>integrations, blueprints,<br/>requests, audit)]
   Q[Job queue]
   O[Orchestrator<br/>retry + resume]
@@ -120,7 +120,8 @@ flowchart LR
 | `internal/naming` | resource naming rules (legacy-compatible defaults) |
 | `internal/quota` | namespace resource tiers |
 | `internal/api` | REST API, authorization, rate limiting (see [api.md](api.md)) |
-| `internal/auth` | OIDC token verification and role mapping |
+| `internal/auth` | password hashing and policy, session tokens, and OIDC token verification across several providers |
+| `internal/identity` | assembles the identity providers (environment and control panel) into one registry |
 | `internal/store` | PostgreSQL persistence, migrations, request queue |
 | `internal/worker` | claims queued requests and runs them |
 | `internal/crypto` | envelope encryption of integration credentials |

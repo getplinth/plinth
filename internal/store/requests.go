@@ -22,6 +22,11 @@ type User struct {
 	Sub   string `json:"-"`
 	Email string `json:"email"`
 	Role  string `json:"role"`
+	// AuthSource is "oidc" for people who sign in through an identity provider
+	// and "local" for password accounts.
+	AuthSource string `json:"auth_source"`
+	// MustChange: a password someone else chose has to be replaced before anything else.
+	MustChange bool `json:"must_change_password,omitempty"`
 }
 
 // UpsertUser records a login and refreshes the role and the e-mail address
@@ -29,10 +34,16 @@ type User struct {
 // be trusted, any team invitations waiting for it are claimed.
 func (s *Store) UpsertUser(ctx context.Context, sub, email string, emailVerified bool, role string) (User, error) {
 	var u User
+	// An identity provider chooses the subject it sends. Password accounts are
+	// "local:<id>", so a provider must never be able to produce one.
+	if strings.HasPrefix(sub, "local:") {
+		return u, ErrForbidden
+	}
 	err := s.pool.QueryRow(ctx, `INSERT INTO users (oidc_sub, email, email_verified, role) VALUES ($1, $2, $3, $4)
 		ON CONFLICT (oidc_sub) DO UPDATE SET email = EXCLUDED.email, email_verified = EXCLUDED.email_verified,
-		  role = EXCLUDED.role, last_seen = now()
+		  role = EXCLUDED.role, last_seen = now() WHERE users.auth_source = 'oidc'
 		RETURNING id, oidc_sub, email, role`, sub, email, emailVerified, role).Scan(&u.ID, &u.Sub, &u.Email, &u.Role)
+	u.AuthSource = "oidc"
 	if err != nil {
 		return u, mapErr(err)
 	}

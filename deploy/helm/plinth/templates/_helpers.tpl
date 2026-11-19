@@ -76,14 +76,22 @@ Secret you manage (recommended). Exactly one source must be chosen for each.
 {{- end -}}
 {{- end -}}
 
+{{- define "plinth.adminSecretName" -}}
+{{- if .Values.admin.existingSecret -}}{{ .Values.admin.existingSecret }}{{- else -}}{{ include "plinth.fullname" . }}-admin{{- end -}}
+{{- end -}}
+{{- define "plinth.adminSecretKey" -}}
+{{- if .Values.admin.existingSecret -}}{{ .Values.admin.existingSecretKey }}{{- else -}}password{{- end -}}
+{{- end -}}
+
 {{/* Fail early, with a sentence that says what to set, instead of crash-looping later. */}}
 {{- define "plinth.validate" -}}
 {{- $oidc := .Values.config.oidc -}}
-{{- if not $oidc.issuer -}}{{ fail "config.oidc.issuer is required: the URL of your OpenID Connect identity provider" }}{{- end -}}
-{{- if not $oidc.audience -}}{{ fail "config.oidc.audience is required: the client id registered for Plinth at your identity provider" }}{{- end -}}
-{{- if and (not (hasPrefix "https://" $oidc.issuer)) (not $oidc.allowHttp) -}}
+{{- if and $oidc.issuer (not $oidc.audience) -}}{{ fail "config.oidc.audience is required with config.oidc.issuer: the client id registered for Plinth at your identity provider" }}{{- end -}}
+{{- if and $oidc.audience (not $oidc.issuer) -}}{{ fail "config.oidc.issuer is required with config.oidc.audience: the URL of your OpenID Connect identity provider. Or leave both empty and add the provider in the control panel." }}{{- end -}}
+{{- if and $oidc.issuer (not (hasPrefix "https://" $oidc.issuer)) (not $oidc.allowHttp) -}}
 {{ fail (printf "config.oidc.issuer %q must be https. Set config.oidc.allowHttp=true only for local testing." $oidc.issuer) }}
 {{- end -}}
+{{- if and (not .Values.admin.create) (not $oidc.issuer) -}}{{ fail "nobody could sign in: set admin.create=true (the chart creates the first administrator), or config.oidc.issuer and config.oidc.audience" }}{{- end -}}
 {{- if and .Values.database.existingSecret .Values.database.url -}}{{ fail "set either database.existingSecret or database.url, not both" }}{{- end -}}
 {{- if not (or .Values.database.existingSecret .Values.database.url) -}}{{ fail "the database connection is required: set database.existingSecret (a Secret holding the PostgreSQL URL, recommended) or database.url" }}{{- end -}}
 {{- if and .Values.masterKey.existingSecret .Values.masterKey.value -}}{{ fail "set either masterKey.existingSecret or masterKey.value, not both" }}{{- end -}}

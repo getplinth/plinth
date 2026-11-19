@@ -26,31 +26,39 @@ const maxBody = 1 << 20 // 1 MiB
 
 // Deps are the server's collaborators.
 type Deps struct {
-	Store    *store.Store
-	Verifier *auth.Verifier
+	Store *store.Store
+	// Verifier checks tokens from identity providers: a single *auth.Verifier
+	// or a *auth.Registry. Password sessions are checked against the store.
+	Verifier auth.TokenVerifier
 	Log      *slog.Logger
+	// Providers is the set of identity providers people may sign in with.
+	// Nil means none (password sign-in only).
+	Providers *auth.Registry
+	// EnvProvider is the provider configured through PLINTH_OIDC_*, shown
+	// read-only in the control panel.
+	EnvProvider *auth.Provider
+	// AllowLoopbackIssuers permits http:// issuers and issuers on this machine.
+	// For local testing only.
+	AllowLoopbackIssuers bool
+	// LoginBurst overrides how many password attempts one username may make
+	// before being slowed down (default 10). For tests.
+	LoginBurst int
+	// ForceLocalLogin keeps password sign-in on whatever the setting says.
+	ForceLocalLogin bool
 	// Per-user limit for submitting and retrying requests. Zero values mean
 	// the defaults (burst 5, 10 per minute).
 	RateBurst     int
 	RatePerMinute int
 
-	// Public is what the browser needs to start the login flow.
-	Public PublicConfig
 	// UI serves the web app for every non-API path; nil serves no UI.
 	UI http.Handler
-}
-
-// PublicConfig is returned by GET /api/v1/config (no authentication): the
-// identity provider the browser should sign in with.
-type PublicConfig struct {
-	Issuer   string `json:"issuer"`
-	ClientID string `json:"client_id"`
 }
 
 // Server serves the API.
 type Server struct {
 	d        Deps
 	limiters limiters
+	logins   *loginLimiter
 }
 
 // New builds the HTTP handler.
@@ -58,7 +66,7 @@ func New(d Deps) http.Handler {
 	if d.Log == nil {
 		d.Log = slog.Default()
 	}
-	s := &Server{d: d, limiters: newLimiters(d.RateBurst, d.RatePerMinute)}
+	s := &Server{d: d, limiters: newLimiters(d.RateBurst, d.RatePerMinute), logins: newLoginLimiter(d.LoginBurst)}
 	mux := http.NewServeMux()
 
 	// public
@@ -68,12 +76,13 @@ func New(d Deps) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"version": Version})
 	})
 
-	mux.HandleFunc("GET /api/v1/config", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, s.d.Public)
-	})
+	mux.HandleFunc("GET /api/v1/config", s.publicConfig)
+	mux.HandleFunc("POST /api/v1/auth/login", s.login)
 
 	// any authenticated user
 	mux.Handle("GET /api/v1/me", s.user(s.me))
+	mux.Handle("POST /api/v1/auth/logout", s.user(s.logout))
+	mux.Handle("POST /api/v1/auth/password", s.user(s.changePassword))
 	mux.Handle("GET /api/v1/blueprints", s.user(s.listBlueprints))
 	mux.Handle("GET /api/v1/blueprints/{name}", s.user(s.getBlueprint))
 	mux.Handle("GET /api/v1/quota-tiers", s.user(s.listTiers))
@@ -105,6 +114,17 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/v1/requests/{id}/reject", s.admin(s.decide(store.DecisionReject)))
 	mux.Handle("POST /api/v1/requests/{id}/release", s.admin(s.decide(store.DecisionRelease)))
 	mux.Handle("GET /api/v1/audit", s.admin(s.listAudit))
+	mux.Handle("GET /api/v1/local-users", s.admin(s.listLocalUsers))
+	mux.Handle("POST /api/v1/local-users", s.admin(s.createLocalUser))
+	mux.Handle("PUT /api/v1/local-users/{id}", s.admin(s.updateLocalUser))
+	mux.Handle("POST /api/v1/local-users/{id}/reset-password", s.admin(s.resetLocalPassword))
+	mux.Handle("DELETE /api/v1/local-users/{id}", s.admin(s.deleteLocalUser))
+	mux.Handle("GET /api/v1/oidc-providers", s.admin(s.listProviders))
+	mux.Handle("POST /api/v1/oidc-providers", s.admin(s.createProvider))
+	mux.Handle("PUT /api/v1/oidc-providers/{id}", s.admin(s.updateProvider))
+	mux.Handle("DELETE /api/v1/oidc-providers/{id}", s.admin(s.deleteProvider))
+	mux.Handle("GET /api/v1/auth-settings", s.admin(s.getAuthSettings))
+	mux.Handle("PUT /api/v1/auth-settings", s.admin(s.putAuthSettings))
 	mux.Handle("GET /api/v1/notifications", s.admin(s.listNotifications))
 	mux.Handle("POST /api/v1/notifications/test", s.admin(s.testNotification))
 	mux.Handle("GET /api/v1/drivers", s.admin(s.listDrivers))
@@ -158,7 +178,7 @@ func (s *Server) common(next http.Handler) http.Handler {
 
 // authenticate verifies the bearer token and loads the user.
 func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (caller, bool) {
-	if s.d.Verifier == nil || s.d.Store == nil {
+	if s.d.Store == nil {
 		writeErr(w, http.StatusServiceUnavailable, "authentication is not configured")
 		return caller{}, false
 	}
@@ -169,7 +189,21 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (caller, b
 		writeErr(w, http.StatusUnauthorized, "missing bearer token")
 		return caller{}, false
 	}
-	id, err := s.d.Verifier.Verify(r.Context(), strings.TrimSpace(raw))
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, auth.SessionPrefix) { // a password session
+		u, err := s.d.Store.SessionUser(r.Context(), store.HashToken(raw), s.d.ForceLocalLogin)
+		if err != nil {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="plinth", error="invalid_token"`)
+			writeErr(w, http.StatusUnauthorized, "invalid token")
+			return caller{}, false
+		}
+		return caller{u}, true
+	}
+	if s.d.Verifier == nil {
+		writeErr(w, http.StatusUnauthorized, "invalid token")
+		return caller{}, false
+	}
+	id, err := s.d.Verifier.Verify(r.Context(), raw)
 	if err != nil {
 		s.d.Log.Info("token rejected", "reason", err.Error()) // reason in the log, not in the response
 		w.Header().Set("WWW-Authenticate", `Bearer realm="plinth", error="invalid_token"`)
@@ -177,6 +211,11 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (caller, b
 		return caller{}, false
 	}
 	u, err := s.d.Store.UpsertUser(r.Context(), id.Sub, id.Email, id.EmailVerified, id.Role)
+	if errors.Is(err, store.ErrForbidden) { // a provider sent a subject that is reserved for password accounts
+		s.d.Log.Warn("token rejected", "reason", "reserved subject")
+		writeErr(w, http.StatusUnauthorized, "invalid token")
+		return caller{}, false
+	}
 	if err != nil {
 		s.d.Log.Error("upsert user", "err", err)
 		writeErr(w, http.StatusInternalServerError, "internal error")
@@ -191,6 +230,10 @@ func (s *Server) user(h handlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, ok := s.authenticate(w, r)
 		if !ok {
+			return
+		}
+		if c.MustChange && !allowedWhilePasswordMustChange(r) {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "choose a new password before doing anything else", "code": "password_change_required"})
 			return
 		}
 		// Make the caller visible to the logging middleware.

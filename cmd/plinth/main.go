@@ -2,6 +2,7 @@
 //
 //	plinth            run the server (configuration from PLINTH_* variables)
 //	plinth genkey     print a new random master key
+//	plinth bootstrap-admin  create the first administrator, or with --reset set a new password
 //	plinth keys       show which master key each stored credential is encrypted with
 //	plinth rekey      move every stored credential to the current master key
 //	                  (--dry-run only reports); see docs/api.md, "Rotating the master key"
@@ -14,7 +15,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/mail"
-	"net/url"
 	"os"
 	"os/signal"
 	"sort"
@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/getplinth/plinth/internal/api"
-	"github.com/getplinth/plinth/internal/auth"
 	"github.com/getplinth/plinth/internal/config"
 	"github.com/getplinth/plinth/internal/crypto"
 	"github.com/getplinth/plinth/internal/notify"
@@ -47,6 +46,13 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(k)
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "bootstrap-admin" {
+		if err := cmdBootstrapAdmin(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "plinth:", err)
+			os.Exit(1)
+		}
 		return
 	}
 	if len(os.Args) > 1 && (os.Args[1] == "keys" || os.Args[1] == "rekey") {
@@ -89,23 +95,23 @@ func run(log *slog.Logger) error {
 	}
 	warnAboutOldKeys(ctx, log, st, len(cfg.MasterKeyPrevious))
 	dispatcher := notifier(cfg, st, log)
-	verifier, err := auth.New(ctx, auth.Config{
-		Issuer: cfg.OIDCIssuer, Audience: cfg.OIDCAudience,
-		AdminGroup: cfg.AdminGroup, GroupsClaim: cfg.GroupsClaim,
-	})
+	ident, err := setupIdentity(ctx, log, cfg, st)
 	if err != nil {
 		return err
 	}
+	if cfg.ForceLocalLogin {
+		log.Warn("PLINTH_FORCE_LOCAL_LOGIN is on: password sign-in works whatever the control panel says")
+	}
 
-	// The browser talks to the identity provider directly, so its origin must
-	// be allowed by the page's content security policy.
-	issuer, _ := url.Parse(cfg.OIDCIssuer)
+	// The browser talks to identity providers directly, so their origins must
+	// be allowed by the page's content security policy; the list follows the
+	// providers an administrator configures.
 	srv := &http.Server{
 		Addr: cfg.ListenAddr,
 		Handler: api.New(api.Deps{
-			Store: st, Verifier: verifier, Log: log,
-			Public: api.PublicConfig{Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCAudience},
-			UI:     web.Handler(issuer.Scheme + "://" + issuer.Host),
+			Store: st, Verifier: ident.registry, Providers: ident.registry, EnvProvider: ident.env,
+			AllowLoopbackIssuers: cfg.OIDCAllowHTTP, ForceLocalLogin: cfg.ForceLocalLogin, Log: log,
+			UI: web.HandlerFunc(ident.connectOrigins),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -121,6 +127,23 @@ func run(log *slog.Logger) error {
 			Store: st, Log: log,
 			Options: orchestrator.Options{MaxAttempts: 3, Backoff: 2 * time.Second},
 		}).Run(ctx, cfg.Workers)
+	}()
+
+	wg.Add(1)
+	go func() { // expired sessions
+		defer wg.Done()
+		tick := time.NewTicker(time.Hour)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				if err := st.PurgeSessions(ctx); err != nil && ctx.Err() == nil {
+					log.Warn("could not remove expired sessions", "err", err)
+				}
+			}
+		}
 	}()
 
 	if dispatcher != nil {

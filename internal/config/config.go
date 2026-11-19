@@ -25,10 +25,23 @@ type Config struct {
 	// shows nothing is encrypted with them any more.
 	MasterKeyPrevious []string
 
-	OIDCIssuer   string // identity provider issuer URL
-	OIDCAudience string // client id the tokens are issued for
-	AdminGroup   string // members of this group are administrators
-	GroupsClaim  string // token claim that lists groups
+	// An identity provider can be configured here, or (usually better) by an
+	// administrator in the control panel. Both are optional: without any,
+	// people sign in with a password.
+	OIDCIssuer    string // identity provider issuer URL
+	OIDCAudience  string // client id the tokens are issued for
+	OIDCName      string // how the provider is named on the sign-in page
+	OIDCAllowHTTP bool   // permit an http:// or local issuer: testing only
+	AdminGroup    string // members of this group are administrators
+	GroupsClaim   string // token claim that lists groups
+
+	// The first administrator, created at start when no password account
+	// exists yet. The account must change this password at first sign-in.
+	BootstrapAdminUsername string
+	BootstrapAdminPassword string
+	// ForceLocalLogin keeps password sign-in on whatever the control panel
+	// says: the way back in if an identity provider stopped working.
+	ForceLocalLogin bool
 
 	Workers int // concurrent request workers
 
@@ -62,6 +75,17 @@ func Load() (Config, error) {
 	return load(os.Getenv, true)
 }
 
+// LoadDatabase reads only the database address, for commands that need nothing else.
+func LoadDatabase() (Config, error) {
+	get := os.Getenv
+	c := Config{DatabaseURL: get("PLINTH_DATABASE_URL"), BootstrapAdminUsername: valueOr(get("PLINTH_BOOTSTRAP_ADMIN_USERNAME"), "admin"),
+		BootstrapAdminPassword: get("PLINTH_BOOTSTRAP_ADMIN_PASSWORD")}
+	if c.DatabaseURL == "" {
+		return c, errors.New("configuration: PLINTH_DATABASE_URL is required")
+	}
+	return c, nil
+}
+
 // LoadStorage reads only what maintenance commands (such as `plinth rekey`)
 // need: the database and the master keys. The identity provider is not required.
 func LoadStorage() (Config, error) {
@@ -76,6 +100,7 @@ func load(get func(string) string, full bool) (Config, error) {
 		MasterKeyPrevious: splitList(get("PLINTH_MASTER_KEY_PREVIOUS")),
 		OIDCIssuer:        get("PLINTH_OIDC_ISSUER"),
 		OIDCAudience:      get("PLINTH_OIDC_AUDIENCE"),
+		OIDCName:          valueOr(get("PLINTH_OIDC_NAME"), "Single sign-on"),
 		AdminGroup:        valueOr(get("PLINTH_ADMIN_GROUP"), "plinth-admins"),
 		GroupsClaim:       valueOr(get("PLINTH_GROUPS_CLAIM"), "groups"),
 		Workers:           2,
@@ -88,14 +113,17 @@ func load(get func(string) string, full bool) (Config, error) {
 	}
 	need(c.DatabaseURL, "PLINTH_DATABASE_URL")
 	need(c.MasterKey, "PLINTH_MASTER_KEY")
-	if full {
-		need(c.OIDCIssuer, "PLINTH_OIDC_ISSUER")
-		need(c.OIDCAudience, "PLINTH_OIDC_AUDIENCE")
+	c.OIDCAllowHTTP, _ = strconv.ParseBool(get("PLINTH_OIDC_ALLOW_HTTP"))
+	c.ForceLocalLogin, _ = strconv.ParseBool(get("PLINTH_FORCE_LOCAL_LOGIN"))
+	c.BootstrapAdminUsername = valueOr(get("PLINTH_BOOTSTRAP_ADMIN_USERNAME"), "admin")
+	c.BootstrapAdminPassword = get("PLINTH_BOOTSTRAP_ADMIN_PASSWORD")
+	if full && (c.OIDCIssuer == "") != (c.OIDCAudience == "") {
+		problems = append(problems, "PLINTH_OIDC_ISSUER and PLINTH_OIDC_AUDIENCE go together: set both to use an identity provider from the environment, or neither (add providers in the control panel)")
 	}
 
 	if full && c.OIDCIssuer != "" {
 		u, err := url.Parse(c.OIDCIssuer)
-		allowHTTP, _ := strconv.ParseBool(get("PLINTH_OIDC_ALLOW_HTTP"))
+		allowHTTP := c.OIDCAllowHTTP
 		switch {
 		case err != nil || u.Host == "":
 			problems = append(problems, "PLINTH_OIDC_ISSUER is not a valid URL")
@@ -140,8 +168,8 @@ func valueOr(v, def string) string {
 
 // Redacted describes the configuration for logs, without secrets.
 func (c Config) Redacted() string {
-	return fmt.Sprintf("listen=%s issuer=%s audience=%s admin_group=%s workers=%d trust_unverified_email=%v previous_master_keys=%d email=%v webhook=%v",
-		c.ListenAddr, c.OIDCIssuer, c.OIDCAudience, c.AdminGroup, c.Workers, c.TrustUnverifiedEmail, len(c.MasterKeyPrevious), c.EmailEnabled(), c.WebhookEnabled())
+	return fmt.Sprintf("listen=%s issuer=%s audience=%s admin_group=%s workers=%d trust_unverified_email=%v previous_master_keys=%d email=%v webhook=%v force_local_login=%v",
+		c.ListenAddr, c.OIDCIssuer, c.OIDCAudience, c.AdminGroup, c.Workers, c.TrustUnverifiedEmail, len(c.MasterKeyPrevious), c.EmailEnabled(), c.WebhookEnabled(), c.ForceLocalLogin)
 }
 
 // loadNotifications reads the e-mail and webhook settings and reports what is wrong with them.

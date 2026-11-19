@@ -80,10 +80,27 @@ spec:
                   name: {{ .Values.masterKey.previous.existingSecret }}
                   key: {{ .Values.masterKey.previous.existingSecretKey }}
             {{- end }}
+            {{- if .Values.config.oidc.issuer }}
             - name: PLINTH_OIDC_ISSUER
               value: {{ .Values.config.oidc.issuer | quote }}
             - name: PLINTH_OIDC_AUDIENCE
               value: {{ .Values.config.oidc.audience | quote }}
+            - name: PLINTH_OIDC_NAME
+              value: {{ .Values.config.oidc.name | quote }}
+            {{- end }}
+            {{- if .Values.admin.create }}
+            - name: PLINTH_BOOTSTRAP_ADMIN_USERNAME
+              value: {{ .Values.admin.username | quote }}
+            - name: PLINTH_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "plinth.adminSecretName" . }}
+                  key: {{ include "plinth.adminSecretKey" . }}
+            {{- end }}
+            {{- if .Values.config.forceLocalLogin }}
+            - name: PLINTH_FORCE_LOCAL_LOGIN
+              value: "true"
+            {{- end }}
             - name: PLINTH_ADMIN_GROUP
               value: {{ .Values.config.oidc.adminGroup | quote }}
             - name: PLINTH_GROUPS_CLAIM

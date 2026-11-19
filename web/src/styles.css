@@ -243,3 +243,17 @@ ul.plain li { border-left: 3px solid var(--line-strong); padding-left: 10px; }
 .badge { display: inline-block; min-width: 1.4em; padding: 0 6px; margin-left: 6px; border-radius: 999px; background: var(--warn); color: var(--surface); font-size: 0.78rem; font-weight: 700; text-align: center; line-height: 1.5; }
 
 @media (max-width: 920px) { .nav .nav-label { display: none; } }
+
+/* Sign-in */
+.login-card { max-width: 26rem; margin: 10vh auto 0; padding: 0 var(--gutter); }
+.login-card .mark { margin: 0 0 14px; }
+.login-card h1 { margin: 0 0 16px; }
+.login-card .panel { margin-top: 0; }
+.provider-list { display: grid; gap: 10px; margin: 8px 0 16px; }
+.provider-list .btn { width: 100%; justify-content: center; }
+.login-or { display: flex; align-items: center; gap: 10px; color: var(--ink-3); font-size: 0.85rem; margin: 4px 0 14px; }
+.login-or::before, .login-or::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
+.narrow { max-width: 30rem; }
+.secret-box { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; background: var(--surface-2); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 10px 12px; margin: 8px 0 12px; }
+.secret-box code { font-size: 1.05rem; letter-spacing: 0.04em; user-select: all; }
+.switch-row { display: flex; gap: 14px; align-items: flex-start; justify-content: space-between; }

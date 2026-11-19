@@ -43,3 +43,18 @@ internal/notify/email.go:generic-password-rule:103
 cmd/plinth/main.go:generic-password-rule:269
 cmd/plinth/main.go:generic-password-rule:273
 internal/notify/notify_test.go:generic-password-rule:163
+
+# Password sign-in: the demo prints a first-run password generated at run time
+# (a %s placeholder here), the alphabet passwords are generated from, code that
+# passes password values along, and made-up strings in component-test mocks.
+cmd/plinth-demo/main.go:generic-password-rule:249
+web/src/pages/ChangePassword.test.tsx:generic-password-rule:62
+internal/auth/password.go:generic-api-key:126
+web/src/pages/LocalUsers.test.tsx:generic-password-rule:24
+web/src/pages/LocalUsers.test.tsx:generic-password-rule:60
+web/src/pages/LocalUsers.test.tsx:generic-api-key:24
+web/src/pages/LocalUsers.test.tsx:generic-api-key:60
+web/src/pages/LocalUsers.tsx:generic-password-rule:41
+web/src/pages/LocalUsers.tsx:generic-password-rule:156
+internal/api/auth_integration_test.go:generic-password-rule:98
+internal/api/handlers_auth.go:generic-password-rule:106

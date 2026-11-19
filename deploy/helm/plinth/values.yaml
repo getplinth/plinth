@@ -1,10 +1,14 @@
 # Default values for the Plinth chart.
 #
-# The three things you must provide:
-#   1. config.oidc.issuer and config.oidc.audience   your identity provider
-#   2. database.existingSecret                        PostgreSQL connection URL
-#   3. masterKey.existingSecret                       32 random bytes, base64
+# The two things you must provide:
+#   1. database.existingSecret                        PostgreSQL connection URL
+#   2. masterKey.existingSecret                       32 random bytes, base64
 # Everything else has a working default.
+#
+# Nobody needs an identity provider to start: the chart creates the first
+# administrator (see "admin" below) and you add your company's single sign-on
+# later, in the control panel (Sign-in). config.oidc is only for setting one
+# up at install time.
 
 image:
   repository: ghcr.io/getplinth/plinth
@@ -22,12 +26,32 @@ fullnameOverride: ""
 # survive a node loss.
 replicaCount: 2
 
+# The first administrator. At start, on a fresh installation (no password
+# account and nobody has signed in), Plinth creates this one, and it must choose
+# a new password at first sign-in. An existing installation is left alone.
+admin:
+  create: true
+  username: admin
+  # A Secret you manage with the starting password (key below). If empty the
+  # chart generates a random one into <release>-admin and keeps it across
+  # upgrades. Read it as shown in the notes printed after install.
+  existingSecret: ""
+  existingSecretKey: password
+
 config:
+  # Keep password sign-in on whatever the control panel says. The way back in
+  # if an identity provider stopped working after password sign-in was turned off.
+  forceLocalLogin: false
   oidc:
+    # Optional: an identity provider configured at install time (shown read-only
+    # in the control panel). Usually better to add providers in the control
+    # panel, where several can coexist. Needs both issuer and audience.
     # Issuer URL of your OpenID Connect provider. Must be https.
     issuer: ""
     # Client id registered for Plinth. Tokens must be issued for it.
     audience: ""
+    # How the provider is named on the sign-in page.
+    name: Single sign-on
     # Members of this group are administrators.
     adminGroup: plinth-admins
     # Token claim that lists a user's groups.

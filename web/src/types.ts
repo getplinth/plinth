@@ -8,6 +8,59 @@ export interface Me {
   role: Role
   /** True when Plinth can send e-mail, so invitations are mailed. */
   notify_email?: boolean
+  /** "local" for password accounts, "oidc" for people signed in through an identity provider. */
+  auth_source?: 'local' | 'oidc'
+  /** A password somebody else chose has to be replaced before anything else. */
+  must_change_password?: boolean
+}
+
+export interface SignInProvider {
+  id: string
+  name: string
+  display_name: string
+  issuer: string
+  client_id: string
+  scopes: string
+}
+
+/** What the sign-in page offers: GET /api/v1/config. */
+export interface SignInOptions {
+  local_login: boolean
+  providers: SignInProvider[]
+}
+
+export interface LocalAccount {
+  id: string
+  username: string
+  email: string
+  role: Role
+  disabled: boolean
+  must_change_password: boolean
+  locked_until?: string
+  last_login?: string
+  created_at: string
+  /** Shown once, when Plinth chose the password. */
+  temporary_password?: string
+}
+
+export interface OidcProvider {
+  id: string
+  name: string
+  display_name: string
+  issuer: string
+  client_id: string
+  scopes: string
+  groups_claim: string
+  admin_group: string
+  trust_unverified_email: boolean
+  enabled: boolean
+  read_only: boolean
+}
+
+export interface AuthSettings {
+  local_login_enabled: boolean
+  /** PLINTH_FORCE_LOCAL_LOGIN keeps password sign-in on whatever is set. */
+  forced: boolean
 }
 
 export type StepStatus = 'pending' | 'running' | 'succeeded' | 'failed'

@@ -23,12 +23,23 @@
             "audience": { "type": "string" },
             "adminGroup": { "type": "string" },
             "groupsClaim": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 },
             "allowHttp": { "type": "boolean" },
             "trustUnverifiedEmail": { "type": "boolean" }
           }
         },
+        "forceLocalLogin": { "type": "boolean" },
         "workers": { "type": "integer", "minimum": 1, "maximum": 32 },
         "publicUrl": { "type": "string", "pattern": "^(https?://.+)?$" }
+      }
+    },
+    "admin": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "username": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._@-]{1,62}$" },
+        "existingSecret": { "type": "string" },
+        "existingSecretKey": { "type": "string", "minLength": 1 }
       }
     },
     "notifications": {

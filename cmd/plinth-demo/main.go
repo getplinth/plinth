@@ -15,7 +15,6 @@ import (
 	"net"
 	"net/http"
 	"net/mail"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -29,6 +28,7 @@ import (
 	"github.com/getplinth/plinth/internal/auth/authtest"
 	"github.com/getplinth/plinth/internal/crypto"
 	"github.com/getplinth/plinth/internal/demo"
+	"github.com/getplinth/plinth/internal/identity"
 	"github.com/getplinth/plinth/internal/notify"
 	"github.com/getplinth/plinth/internal/orchestrator"
 	"github.com/getplinth/plinth/internal/store"
@@ -110,18 +110,22 @@ func run(log *slog.Logger) error {
 		{Sub: "root", Email: "root@example.test", Name: "Root (platform admin)", Groups: []string{adminGrp}},
 		{Sub: "ada", Email: "ada@example.test", Name: "Ada (platform admin)", Groups: []string{adminGrp}},
 	})
-	verifier, err := auth.New(ctx, auth.Config{Issuer: idp.Issuer(), Audience: clientID, AdminGroup: adminGrp})
+	// The stand-in provider is the one "from the environment": read-only in the control panel.
+	env := &auth.Provider{Name: "environment", DisplayName: "Demo sign-in (stand-in provider)", Issuer: idp.Issuer(), ClientID: clientID, AdminGroup: adminGrp}
+	registry := identity.NewRegistry(st, env, true, log)
+	if err := registry.Refresh(ctx); err != nil {
+		return err
+	}
+	adminNote, err := demoAdmin(ctx, st)
 	if err != nil {
 		return err
 	}
-	issuerURL, _ := url.Parse(idp.Issuer())
 
 	srv := &http.Server{
 		Addr: appAddr,
 		Handler: api.New(api.Deps{
-			Store: st, Verifier: verifier, Log: log,
-			Public: api.PublicConfig{Issuer: idp.Issuer(), ClientID: clientID},
-			UI:     web.Handler(issuerURL.Scheme + "://" + issuerURL.Host),
+			Store: st, Verifier: registry, Providers: registry, EnvProvider: env, AllowLoopbackIssuers: true, Log: log,
+			UI: web.HandlerFunc(func() []string { return identity.ConnectOrigins(registry) }),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -158,10 +162,11 @@ func run(log *slog.Logger) error {
 	fmt.Printf("\nPlinth demo is running (simulated systems, no passwords).\n\n"+
 		"  Open   http://%s\n"+
 		"  Sign in as Alice or Bob to request a project, or as Root or Ada to administer.\n"+
+		"%s"+
 		"  Try    the \"regulated\" blueprint waits for an administrator other than the requester.\n"+
 		"  Tip    a tenant name containing \"fail\" fails once so you can try Retry.\n"+
 		"%s\n"+
-		"Press Ctrl+C to stop.\n\n", appAddr, mailNote)
+		"Press Ctrl+C to stop.\n\n", appAddr, adminNote, mailNote)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -218,4 +223,30 @@ func seed(ctx context.Context, st *store.Store) error {
 		}
 	}
 	return nil
+}
+
+// demoAdmin makes sure a password account exists, so the password sign-in can be
+// tried next to the stand-in provider. The first-run password is kept in
+// .demo/admin-password until it is changed (the account must change it).
+func demoAdmin(ctx context.Context, st *store.Store) (string, error) {
+	path := filepath.Join(".demo", "admin-password")
+	pw, err := auth.GeneratePassword()
+	if err != nil {
+		return "", err
+	}
+	hash, err := auth.HashPassword(pw)
+	if err != nil {
+		return "", err
+	}
+	created, err := st.EnsureBootstrapAdmin(ctx, "admin", hash, false)
+	if err != nil {
+		return "", err
+	}
+	if created {
+		if err := os.WriteFile(path, []byte(pw+"\n"), 0o600); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("  Admin  or sign in with a password: username admin, password %s (you must choose a new one)\n", pw), nil
+	}
+	return "  Admin  password sign-in: username admin (reset with `docker compose down -v`, or plinth bootstrap-admin --reset)\n", nil
 }

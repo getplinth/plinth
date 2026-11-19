@@ -87,7 +87,7 @@ func TestBadTokensGet401WithoutDetails(t *testing.T) {
 // The API and the web app share one server: API routes keep their own strict
 // policy and JSON errors, everything else is the app with its own policy.
 func TestAPIAndUIShareAServer(t *testing.T) {
-	h := New(Deps{UI: web.Handler("https://idp.example.com"), Public: PublicConfig{Issuer: "https://idp.example.com", ClientID: "plinth"}})
+	h := New(Deps{UI: web.Handler("https://idp.example.com")})
 
 	api := do(h, "GET", "/api/v1/version", "", "")
 	if api.Code != 200 || !strings.Contains(api.Header().Get("Content-Security-Policy"), "default-src 'none'") ||
@@ -95,7 +95,7 @@ func TestAPIAndUIShareAServer(t *testing.T) {
 		t.Fatalf("API responses keep the locked-down policy: %d %v", api.Code, api.Header())
 	}
 	cfg := do(h, "GET", "/api/v1/config", "", "")
-	if cfg.Code != 200 || !strings.Contains(cfg.Body.String(), `"client_id":"plinth"`) {
+	if cfg.Code != 200 || !strings.Contains(cfg.Body.String(), `"providers":[]`) || !strings.Contains(cfg.Body.String(), `"local_login":false`) {
 		t.Fatalf("public config: %d %s", cfg.Code, cfg.Body.String())
 	}
 	if cfg.Header().Get("Cache-Control") != "no-store" {

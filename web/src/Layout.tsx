@@ -44,6 +44,8 @@ export function Layout() {
                 <NavLink to="/admin/integrations">Integrations</NavLink>
                 <NavLink to="/admin/blueprints">Blueprints</NavLink>
                 <NavLink to="/admin/tiers">Quota tiers</NavLink>
+                <NavLink to="/admin/users">Users</NavLink>
+                <NavLink to="/admin/sign-in">Sign-in</NavLink>
                 <NavLink to="/admin/notifications">Notifications</NavLink>
                 <NavLink to="/admin/audit">Audit log</NavLink>
               </>
@@ -52,6 +54,7 @@ export function Layout() {
           <div className="who">
             <span>{me.email}</span>
             {me.role === 'admin' && <span className="chip accent">admin</span>}
+            {me.auth_source === 'local' && <NavLink to="/account/password" className="btn sm quiet">Change password</NavLink>}
             <button className="btn sm quiet" onClick={leave}>Sign out</button>
           </div>
         </div>

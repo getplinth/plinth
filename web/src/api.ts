@@ -6,6 +6,7 @@ export class ApiError extends Error {
     public status: number,
     message: string,
     public details: string[] = [],
+    public code?: string,
   ) {
     super(message)
   }
@@ -52,9 +53,9 @@ export async function api<T>(path: string, opts: Options = {}): Promise<T> {
     data = undefined
   }
   if (!res.ok) {
-    const body = (data ?? {}) as { error?: string; details?: unknown }
+    const body = (data ?? {}) as { error?: string; details?: unknown; code?: string }
     const details = Array.isArray(body.details) ? body.details.map(String) : []
-    throw new ApiError(res.status, body.error ?? `Request failed (${res.status})`, details)
+    throw new ApiError(res.status, body.error ?? `Request failed (${res.status})`, details, body.code)
   }
   return data as T
 }

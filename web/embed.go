@@ -24,7 +24,18 @@ func Handler(connectOrigins ...string) http.Handler {
 	if err != nil {
 		panic(err)
 	}
-	return newHandler(sub, connectOrigins)
+	return newHandler(sub, func() []string { return connectOrigins })
+}
+
+// HandlerFunc is Handler for origins that change while running (identity
+// providers an administrator adds in the control panel): origins is asked on
+// every request, so a new provider works without a restart.
+func HandlerFunc(origins func() []string) http.Handler {
+	sub, err := fs.Sub(dist, "dist")
+	if err != nil {
+		panic(err)
+	}
+	return newHandler(sub, origins)
 }
 
 // contentSecurityPolicy is deliberately strict: scripts, styles and fonts only
@@ -54,13 +65,12 @@ const notBuilt = `<!doctype html><meta charset="utf-8"><title>Plinth</title>
 <h1>Plinth</h1><p>The web interface has not been built into this binary.
 Run <code>make web</code> and rebuild, or use the API at <code>/api/v1</code>.</p></body>`
 
-func newHandler(files fs.FS, connectOrigins []string) http.Handler {
-	csp := contentSecurityPolicy(connectOrigins)
+func newHandler(files fs.FS, origins func() []string) http.Handler {
 	index, indexErr := fs.ReadFile(files, "index.html")
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", csp)
+		h.Set("Content-Security-Policy", contentSecurityPolicy(origins()))
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")

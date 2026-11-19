@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { api, messageOf } from './api'
 import { finishLogin, getToken, startLogin } from './auth'
 import { Mark } from './components'
+import { ChangePasswordPage } from './pages/ChangePassword'
 import type { Me } from './types'
 
 const SessionContext = createContext<Me | null>(null)
@@ -37,7 +38,8 @@ function Problem({ message }: { message: string }) {
 
 /**
  * Gate for the whole app: finishes the login on /callback, sends signed-out
- * visitors to the identity provider, and loads who the user is.
+ * visitors to the sign-in page, loads who the user is, and makes someone whose
+ * password was chosen by somebody else replace it before anything else.
  */
 export function Session({ children }: { children: ReactNode }) {
   const loc = useLocation()
@@ -45,7 +47,7 @@ export function Session({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null)
   const [problem, setProblem] = useState<string>()
   const onCallback = loc.pathname === '/callback'
-  const signedOutPage = loc.pathname === '/signed-out'
+  const publicPage = loc.pathname === '/signed-out' || loc.pathname === '/login'
 
   useEffect(() => {
     let cancelled = false
@@ -56,7 +58,7 @@ export function Session({ children }: { children: ReactNode }) {
           if (!cancelled) navigate(returnTo, { replace: true })
           return
         }
-        if (signedOutPage) return
+        if (publicPage) return
         if (!(await getToken())) {
           await startLogin(loc.pathname + loc.search)
           return
@@ -72,11 +74,12 @@ export function Session({ children }: { children: ReactNode }) {
     }
     // The gate runs on navigation between the special pages and the app.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onCallback, signedOutPage])
+  }, [onCallback, publicPage])
 
   if (problem) return <Problem message={problem} />
-  if (signedOutPage) return <>{children}</>
+  if (publicPage) return <>{children}</>
   if (onCallback) return <Waiting text="Finishing sign-in…" />
   if (!me) return <Waiting text="Signing you in…" />
+  if (me.must_change_password) return <SessionContext.Provider value={me}><ChangePasswordPage forced /></SessionContext.Provider>
   return <SessionContext.Provider value={me}>{children}</SessionContext.Provider>
 }

@@ -15,12 +15,33 @@ and open http://127.0.0.1:8080
 
 Check the installation:
   helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }}
+{{- $url := "https://<your Plinth address>" }}
+{{- if .Values.ingress.enabled }}{{ $url = printf "%s://%s" (ternary "https" "http" (not (empty .Values.ingress.tls))) (index .Values.ingress.hosts 0) }}{{ end }}
 
-Your identity provider must allow this client:
-  client id     {{ .Values.config.oidc.audience }}
-  redirect URI  {{ if .Values.ingress.enabled }}{{ if .Values.ingress.tls }}https{{ else }}http{{ end }}://{{ index .Values.ingress.hosts 0 }}{{ else }}https://<your Plinth address>{{ end }}/callback
-  grant         authorization code with PKCE (public client), CORS allowed from that address
-  administrators are members of the group "{{ .Values.config.oidc.adminGroup }}"
+Signing in
+{{- if .Values.admin.create }}
+  The first administrator is "{{ .Values.admin.username }}". Its starting password:
+    kubectl --namespace {{ .Release.Namespace }} get secret {{ include "plinth.adminSecretName" . }} -o jsonpath='{.data.{{ include "plinth.adminSecretKey" . }}}' | base64 -d; echo
+  You choose a new password at first sign-in, so that one is then out of date.
+  It only works on a fresh installation: an upgraded one gets no new account. If you lose access later:
+    kubectl --namespace {{ .Release.Namespace }} exec deploy/{{ include "plinth.fullname" . }} -- plinth bootstrap-admin --reset
+{{- end }}
+{{- if .Values.config.oidc.issuer }}
+  Identity provider "{{ .Values.config.oidc.name }}" (from these values) is offered on the sign-in page.
+  It must allow this client:
+    client id     {{ .Values.config.oidc.audience }}
+    redirect URI  {{ $url }}/callback
+    grant         authorization code with PKCE (public client), CORS allowed from that address
+    administrators are members of the group "{{ .Values.config.oidc.adminGroup }}"
+{{- else }}
+  To use your company's single sign-on, sign in as the administrator and add the provider under Sign-in.
+  At the provider, register Plinth as a public client (authorization code with PKCE) with the redirect URI
+    {{ $url }}/callback
+{{- end }}
+{{- if .Values.config.forceLocalLogin }}
+
+NOTE: config.forceLocalLogin is on: password sign-in works whatever the control panel says.
+{{- end }}
 {{- if .Values.config.oidc.allowHttp }}
 
 WARNING: config.oidc.allowHttp is on. Use it for local testing only.

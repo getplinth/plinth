@@ -273,6 +273,51 @@ func TestInstalledChart(t *testing.T) {
 		}
 	})
 
+	t.Run("the first administrator signs in with the generated password and must change it", func(t *testing.T) {
+		enc := kubectl(t, "get", "secret", "plinth-admin", "-o", "jsonpath={.data.password}")
+		raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(enc))
+		if err != nil || len(raw) != 20 {
+			t.Fatalf("the generated password: %q %v", raw, err)
+		}
+		first := string(raw)
+		code, body := f.Do("", "POST", "/api/v1/auth/login", map[string]string{"username": "admin", "password": first})
+		var login struct {
+			Token      string `json:"token"`
+			MustChange bool   `json:"must_change_password"`
+		}
+		_ = json.Unmarshal(body, &login)
+		if code != 200 || !login.MustChange || !strings.HasPrefix(login.Token, "plt_") {
+			t.Fatalf("sign in: %d %s", code, body)
+		}
+		if code, _ := f.Do(login.Token, "GET", "/api/v1/requests", nil); code != 403 {
+			t.Errorf("until the password is changed nothing else may work: %d", code)
+		}
+		own := first + "-changed-by-the-test"
+		if code, body := f.Do(login.Token, "POST", "/api/v1/auth/password", map[string]string{"current_password": first, "new_password": own}); code != 204 {
+			t.Fatalf("change: %d %s", code, body)
+		}
+		if code, _ := f.Do(login.Token, "GET", "/api/v1/local-users", nil); code != 200 {
+			t.Errorf("the bootstrap account is an administrator: %d", code)
+		}
+		if code, _ := f.Do("", "POST", "/api/v1/auth/login", map[string]string{"username": "admin", "password": first}); code != 401 {
+			t.Errorf("the starting password still works after it was changed: %d", code)
+		}
+		// Both replicas start together and look for a first administrator: one account exists.
+		if n := psql(t, "select count(*) from local_accounts"); n != "1" {
+			t.Errorf("local accounts = %s", n)
+		}
+		// The provider from the environment and password sign-in are both offered.
+		code, body = f.Do("", "GET", "/api/v1/config", nil)
+		if code != 200 || !strings.Contains(string(body), `"local_login":true`) || !strings.Contains(string(body), "devidp.idp.svc.cluster.local:9100") {
+			t.Errorf("sign-in options: %d %s", code, body)
+		}
+		for _, p := range pods(t) {
+			if strings.Contains(kubectl(t, "logs", p), first) {
+				t.Error("the starting password is in a pod's log")
+			}
+		}
+	})
+
 	secret := "super-secret-chart-test-password"
 	t.Run("administration works and the settings are encrypted in the database", func(t *testing.T) {
 		code, body := f.Do(root, "POST", "/api/v1/integrations", map[string]any{

@@ -12,7 +12,7 @@ func app() http.Handler {
 	return newHandler(fstest.MapFS{
 		"index.html":         {Data: []byte("<!doctype html><title>Plinth</title><div id=root></div>")},
 		"assets/app-1a2b.js": {Data: []byte("console.log(1)")},
-	}, []string{"https://idp.example.com"})
+	}, func() []string { return []string{"https://idp.example.com"} })
 }
 
 func get(h http.Handler, method, path string) *httptest.ResponseRecorder {
@@ -80,9 +80,21 @@ func TestOnlyReadMethodsAndPathTraversalIsContained(t *testing.T) {
 }
 
 func TestMissingBuildStillStarts(t *testing.T) {
-	h := newHandler(fstest.MapFS{}, nil)
+	h := newHandler(fstest.MapFS{}, func() []string { return nil })
 	rec := get(h, "GET", "/")
 	if rec.Code != 503 || !strings.Contains(rec.Body.String(), "make web") {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestOriginsAreReadOnEveryRequest(t *testing.T) {
+	origins := []string{"https://one.example.com"}
+	h := newHandler(fstest.MapFS{"index.html": {Data: []byte("x")}}, func() []string { return origins })
+	if csp := get(h, "GET", "/").Header().Get("Content-Security-Policy"); !strings.Contains(csp, "https://one.example.com") {
+		t.Fatalf("%s", csp)
+	}
+	origins = []string{"https://one.example.com", "https://two.example.com"}
+	if csp := get(h, "GET", "/").Header().Get("Content-Security-Policy"); !strings.Contains(csp, "https://two.example.com") {
+		t.Errorf("a provider added later must be allowed without a restart: %s", csp)
 	}
 }

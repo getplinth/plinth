@@ -8,7 +8,7 @@ A single-page app (React, TypeScript, Vite) compiled into the Plinth binary, so 
 make demo        # builds the UI, starts PostgreSQL in Docker, runs Plinth with simulated systems
 ```
 
-Open <http://127.0.0.1:8080> and sign in as **Alice** or **Bob** (developers) or **Root** or **Ada** (administrators). The demo uses a stand-in identity provider with no passwords, simulated Git/registry/cluster/database drivers, and binds only to `127.0.0.1`. It talks to no real system. A team name containing `fail` fails once per project so the Retry flow can be tried.
+Open <http://127.0.0.1:8080> and sign in as **Alice** or **Bob** (developers) or **Root** or **Ada** (administrators), or with the password account `admin` (its first-run password is printed in the terminal and must be changed). The demo uses a stand-in identity provider with no passwords, simulated Git/registry/cluster/database drivers, and binds only to `127.0.0.1`. It talks to no real system. A team name containing `fail` fails once per project so the Retry flow can be tried.
 
 Things to try:
 - **Approval.** The `regulated` blueprint needs approval: ask for a project as Alice, then approve it as Root. Root cannot approve Root's own request; Ada can.
@@ -29,14 +29,21 @@ For UI development run `make demo` in one terminal and `cd web && npm run dev` i
 | Integrations | admins | add, check, replace and delete connections to Git, registry, clusters and databases |
 | Blueprints | admins | combine integrations into what developers can request |
 | Notifications | admins | which channels are on, a **Send a test message** button, and the latest e-mails and webhook calls with their outcome and reason |
+| Users | admins | password accounts: create (with a one-time password), change role, disable, reset password, delete |
+| Sign-in | admins | the password sign-in switch and the identity providers, with the redirect address to register at each |
 | Quota tiers | admins | the sizes developers choose: namespace totals and per-container defaults |
 | Audit log | admins | who changed what |
 
 ## Sign-in
 
-OpenID Connect authorization code flow with PKCE, performed in the browser by `oidc-client-ts`. The identity provider's address and client id come from the server (`GET /api/v1/config`). The ID token is sent to the API as a bearer token and kept in `sessionStorage`, so it disappears with the tab. When the API answers 401 the app signs out and sends the user through login again, returning to the page they were on (only same-site paths are accepted as the return address).
+The sign-in page offers what the server offers (`GET /api/v1/config`): a username and password form when password sign-in is on, and a button for each identity provider an administrator added. With a single provider and no password form it goes straight to the provider.
 
-Your identity provider must allow the app as a **public client** with redirect URI `https://<your plinth host>/callback`, PKCE (S256), and CORS for the discovery and token endpoints from that origin. Add the `groups` claim to the ID token if you use group-based administrators.
+- **Password:** the session token returned by `POST /auth/login` is sent to the API as a bearer token and kept in `sessionStorage`, so it disappears with the tab. A password somebody else chose (the first administrator's, or one an administrator set or reset) has to be replaced first: the app shows only the *Choose a new password* page until then.
+- **Identity provider:** the OpenID Connect authorization code flow with PKCE, performed in the browser by `oidc-client-ts`. The ID token is sent to the API as a bearer token, kept in `sessionStorage`. The provider used is remembered for the tab so the callback knows which one answered.
+
+When the API answers 401 the app signs out and returns to the sign-in page, then back to the page the person was on (only same-site paths are accepted as the return address). Sign-out also ends a password session on the server.
+
+A provider must allow the app as a **public client** with redirect URI `https://<your plinth host>/callback`, PKCE (S256), and CORS for the discovery and token endpoints from that origin. Add the `groups` claim to the ID token if you use group-based administrators. Administrators manage providers, password accounts and the password sign-in switch under **Sign-in** and **Users**.
 
 ## Security
 

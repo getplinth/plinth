@@ -6,6 +6,10 @@ import { AuditPage } from './pages/Audit'
 import { BlueprintsPage } from './pages/Blueprints'
 import { TiersPage } from './pages/Tiers'
 import { NotificationsPage } from './pages/Notifications'
+import { LoginPage } from './pages/Login'
+import { ChangePasswordPage } from './pages/ChangePassword'
+import { LocalUsersPage } from './pages/LocalUsers'
+import { SignInPage } from './pages/SignIn'
 import { IntegrationsPage } from './pages/Integrations'
 import { NewRequestPage } from './pages/NewRequest'
 import { RequestPage } from './pages/RequestDetail'
@@ -54,6 +58,7 @@ export function App() {
     <Session>
       <Routes>
         <Route path="/signed-out" element={<SignedOut />} />
+        <Route path="/login" element={<LoginPage />} />
         <Route path="/callback" element={null} />
         <Route element={<Layout />}>
           <Route index element={<RequestsPage />} />
@@ -67,6 +72,9 @@ export function App() {
           <Route path="admin/blueprints" element={<AdminOnly><BlueprintsPage /></AdminOnly>} />
           <Route path="admin/tiers" element={<AdminOnly><TiersPage /></AdminOnly>} />
           <Route path="admin/notifications" element={<AdminOnly><NotificationsPage /></AdminOnly>} />
+          <Route path="admin/users" element={<AdminOnly><LocalUsersPage /></AdminOnly>} />
+          <Route path="admin/sign-in" element={<AdminOnly><SignInPage /></AdminOnly>} />
+          <Route path="account/password" element={<ChangePasswordPage />} />
           <Route path="admin/audit" element={<AdminOnly><AuditPage /></AdminOnly>} />
           <Route path="*" element={<NotFound />} />
         </Route>

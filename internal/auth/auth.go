@@ -77,6 +77,11 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (Identity, error) {
 	if err != nil {
 		return Identity{}, fmt.Errorf("auth: %w", err)
 	}
+	return identityFrom(tok, v.adminGroup, v.groupsClaim)
+}
+
+// identityFrom reads who a verified token is about.
+func identityFrom(tok *oidc.IDToken, adminGroup, groupsClaim string) (Identity, error) {
 	var claims map[string]any
 	if err := tok.Claims(&claims); err != nil {
 		return Identity{}, fmt.Errorf("auth: claims: %w", err)
@@ -93,16 +98,21 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (Identity, error) {
 	} else {
 		id.Email = id.Sub
 	}
-	if v.adminGroup != "" {
-		if groups, ok := claims[v.groupsClaim].([]any); ok {
+	if adminGroup != "" {
+		if groups, ok := claims[groupsClaim].([]any); ok {
 			for _, g := range groups {
-				if s, _ := g.(string); s == v.adminGroup {
+				if s, _ := g.(string); s == adminGroup {
 					id.Role = RoleAdmin
 				}
 			}
 		}
 	}
 	return id, nil
+}
+
+// TokenVerifier turns a bearer token from an identity provider into the person it names.
+type TokenVerifier interface {
+	Verify(ctx context.Context, raw string) (Identity, error)
 }
 
 // claimTrue reads a boolean claim. Most providers send a JSON boolean, a few

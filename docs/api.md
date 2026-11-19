@@ -1,6 +1,6 @@
 # API and operation
 
-Plinth is a single binary: REST API plus background workers, backed by PostgreSQL. It has no user database; people sign in with your identity provider.
+Plinth is a single binary: REST API plus background workers, backed by PostgreSQL. People sign in with a password Plinth keeps, with an identity provider you configure (or both).
 
 ## Configuration
 
@@ -8,8 +8,10 @@ Plinth is a single binary: REST API plus background workers, backed by PostgreSQ
 |---|---|---|
 | `PLINTH_DATABASE_URL` | yes | PostgreSQL connection URL. Migrations run at start. |
 | `PLINTH_MASTER_KEY` | yes | 32 random bytes, base64. Encrypts integration credentials at rest. Create one with `plinth genkey`; inject it from a secret manager. **Losing it makes stored integrations unreadable.** |
-| `PLINTH_OIDC_ISSUER` | yes | issuer URL of your identity provider; must be `https` |
-| `PLINTH_OIDC_AUDIENCE` | yes | client id the tokens are issued for |
+| `PLINTH_BOOTSTRAP_ADMIN_PASSWORD` | no | the first administrator's starting password, used at start only on a fresh installation (no password account and nobody has signed in yet), so upgrading an existing installation never adds an administrator by surprise; it must be changed at first sign-in. `PLINTH_BOOTSTRAP_ADMIN_USERNAME` (default `admin`) names it |
+| `PLINTH_FORCE_LOCAL_LOGIN` | no | `true` keeps password sign-in on whatever the control panel says: the way back in when an identity provider stopped working |
+| `PLINTH_OIDC_ISSUER`, `PLINTH_OIDC_AUDIENCE` | no | an identity provider fixed at install time (issuer must be `https`, audience is the client id); both or neither. It is shown read-only in the control panel. Usually better to add providers there |
+| `PLINTH_OIDC_NAME` | no | how that provider is named on the sign-in page (default `Single sign-on`) |
 | `PLINTH_ADMIN_GROUP` | no | members of this group are administrators (default `plinth-admins`) |
 | `PLINTH_GROUPS_CLAIM` | no | token claim that lists groups (default `groups`) |
 | `PLINTH_MASTER_KEY_PREVIOUS` | no | former master key(s), comma separated, only while [rotating](#rotating-the-master-key). Read-only: nothing new is encrypted with them |
@@ -29,21 +31,70 @@ All configuration problems are reported together at startup, and secrets are nev
 
 ## Authentication and roles
 
-Every call except health and version needs `Authorization: Bearer <JWT>` from your identity provider. The token must be signed by the issuer's published keys, unexpired, and issued for `PLINTH_OIDC_AUDIENCE`. Bad tokens get a plain `401 invalid token` without saying why; the reason goes to the server log only.
+Nothing has to be configured to sign in: Plinth starts with a password account for the first administrator, and an administrator adds identity providers later in the control panel.
+
+```mermaid
+flowchart LR
+  A["Install<br/>no identity provider needed"] --> B["First start<br/>admin account created<br/>from a generated password"]
+  B --> C["Sign in as admin<br/>choose a new password"]
+  C --> D["Control panel, Sign-in<br/>add your company SSO"]
+  D --> E["Sign in once with SSO<br/>as an administrator"]
+  E --> F["Optional: turn password<br/>sign-in off"]
+  F -. "SSO breaks?" .-> G["PLINTH_FORCE_LOCAL_LOGIN<br/>or plinth bootstrap-admin --reset"]
+```
+
+Every call except health, version, `GET /config` and `POST /auth/login` needs `Authorization: Bearer <token>`. There are two kinds of token, told apart by their form:
+
+- a **session token** (`plt_...`) from password sign-in. Only its SHA-256 is stored. It ends after 8 hours without use and never lasts longer than 7 days, on sign-out, when the password is changed or reset (the other sessions end), when the account is disabled, or when password sign-in is turned off;
+- an **ID token** (a JWT) from an identity provider. It is verified against the provider named in its `iss` claim: signed by that issuer's published keys, unexpired, issued for that provider's client id. Bad tokens get a plain `401 invalid token` without saying why; the reason goes to the server log only.
 
 | Role | Who | Can |
 |---|---|---|
-| `admin` | members of `PLINTH_ADMIN_GROUP` | manage integrations and blueprints, read the audit log, see and retry anyone's requests |
+| `admin` | a password account with the role, or a member of the provider's administrator group | manage integrations and blueprints, users and sign-in, read the audit log, see and retry anyone's requests |
 | `user` | everyone else | list blueprints (as a summary), submit requests, see and retry **their own** requests |
 
-The role is refreshed from the token on every call, so removing someone from the admin group takes effect at once.
+For identity providers the role is refreshed from the token on every call, so removing someone from the administrator group takes effect at once. For password accounts an administrator sets it.
+
+### Password sign-in
+
+`POST /api/v1/auth/login` with `{username, password}` returns `{token, expires_at, must_change_password}`. Usernames are case-insensitive.
+
+- **Passwords** are stored as argon2id hashes (64 MiB, 3 passes), never in clear text, logs or the audit log. At least 12 and at most 128 characters, not containing the username or the e-mail name, not trivially repetitive or common. A password an administrator chose or reset, and the bootstrap one, must be replaced at first sign-in: until then only `GET /me`, `POST /auth/password` and `POST /auth/logout` work (`403` with code `password_change_required`).
+- **Guessing is slowed down.** Each username allows a burst of 10 attempts, then one every 6 seconds, and each remote address 30 then one every 2 seconds (`429`). Five wrong passwords in a row lock the account for a minute, doubling per further failure up to 15 minutes; the lockout is audited (`auth.lockout`). A locked, disabled, unknown or wrong sign-in all answer the same `401 invalid username or password`, and an unknown username takes as long to check as a real one, so neither reveals which accounts exist. Behind a reverse proxy every client has the proxy's address, so the per-username limit does the real work; forwarding headers are not trusted.
+- `POST /auth/password` (`current_password`, `new_password`) changes your own password; `POST /auth/logout` ends the session.
+
+### Users (password accounts)
+
+Administrators manage them under *Users*: `GET`, `POST /local-users`, `PUT`, `DELETE /local-users/{id}` and `POST /local-users/{id}/reset-password`. Without a password in the request Plinth generates one (20 characters) and returns it **once** as `temporary_password`. An e-mail address given by the administrator is trusted, so team invitations waiting for it are accepted at once. You cannot disable, demote, delete or reset yourself. An account with requests or team memberships on record cannot be deleted, only disabled. Nobody can remove the last password administrator unless an identity provider is configured, and two administrators removing each other at the same moment still leave one.
+
+### Identity providers
+
+Any OpenID Connect provider works (Keycloak, Microsoft Entra ID, Okta, Auth0, Google Workspace, ...). Under *Sign-in* an administrator adds one with `POST /oidc-providers` (`name`, `display_name`, `issuer`, `client_id`, and optionally `scopes`, `groups_claim`, `admin_group`, `trust_unverified_email`, `enabled`). Plinth contacts the issuer when you save, so a wrong address is found then. Several can coexist; each has its own administrator group, and the same subject at two providers is two different people. At the provider, register Plinth as a **public client** (authorization code with PKCE) with the redirect URI `https://<your Plinth address>/callback`; no client secret is involved. Providers from `PLINTH_OIDC_*` are listed read-only and keep their users' original identities.
+
+- **The issuer is checked before Plinth contacts it:** `https`, a host, no credentials, query or fragment, never a link-local address (where cloud metadata lives), and not this machine unless `PLINTH_OIDC_ALLOW_HTTP` is set for local testing. Connections are checked again after name resolution and redirects to other hosts are not followed.
+- **A provider that is down does not stop Plinth or the other providers.** Keys are fetched on first use. Changes made through one replica reach the others within seconds, or at once when a token from an unknown issuer arrives.
+- **A provider cannot take over a password account.** People who sign in through a provider are keyed by provider and subject, and a subject that looks like a password account (`local:...`) is refused.
+- **The browser may only call the providers you configured:** the page's content security policy follows the list.
+
+### Turning password sign-in off, and getting back in
+
+*Sign-in* has a switch for password sign-in. It refuses to turn it off unless an identity provider is enabled **and** an administrator has already signed in through one, which shows that the provider and its administrator group work. Turning it off ends the password sessions. Plinth also refuses to disable or delete the last enabled way to sign in. If the provider breaks anyway:
+
+- set `PLINTH_FORCE_LOCAL_LOGIN=true` (Helm: `config.forceLocalLogin`) and restart: password sign-in works whatever the setting says; or
+- run `plinth bootstrap-admin --reset` against the database (it needs only `PLINTH_DATABASE_URL`): it sets a new password for the account named by `--username` or `PLINTH_BOOTSTRAP_ADMIN_USERNAME` (creating it as an administrator if it does not exist), enables and unlocks it, ends its sessions, and requires a new password at the next sign-in. Without `--reset` it creates the first administrator (also on an installation that already has users), or refuses when a password account exists. The password comes from `PLINTH_BOOTSTRAP_ADMIN_PASSWORD` or is generated and printed once.
 
 ## Endpoints
 
 | Method and path | Who | Purpose |
 |---|---|---|
 | `GET /healthz`, `/readyz`, `/api/v1/version` | anyone | liveness, readiness (database), version |
-| `GET /api/v1/me` | user | who am I |
+| `GET /api/v1/config` | anyone | what the sign-in page offers: whether password sign-in is on, and the identity providers (id, display name, issuer, client id, scopes) |
+| `POST /api/v1/auth/login` | anyone | password sign-in; returns a session token |
+| `POST /api/v1/auth/logout`, `/auth/password` | user | end this session / change your own password |
+| `GET /api/v1/me` | user | who am I (including `auth_source` and whether the password must be changed) |
+| `GET`, `POST /api/v1/local-users`; `PUT`, `DELETE /{id}`; `POST /{id}/reset-password` | admin | password accounts |
+| `GET`, `POST /api/v1/oidc-providers`; `PUT`, `DELETE /{id}` | admin | identity providers (the one from the environment is read-only) |
+| `GET`, `PUT /api/v1/auth-settings` | admin | password sign-in on or off |
 | `GET /api/v1/integrations`, `POST` | admin | list / create a configured system (`kind`, `driver`, `name`, `config`) |
 | `GET`, `PUT`, `DELETE /api/v1/integrations/{name}` | admin | read key names / replace config / delete (409 while a blueprint uses it) |
 | `POST /api/v1/integrations/{name}/validate` | admin | contact the system with the stored config; returns `ok` or `error` |
@@ -177,6 +228,8 @@ flowchart LR
 - **Webhook.** `POST` of `{"id", "type", "time", "text", "data"}`; `text` is one line, so Slack-style incoming webhooks show something readable. With `PLINTH_WEBHOOK_SECRET`, each request has `X-Plinth-Timestamp` (unix seconds) and `X-Plinth-Signature: sha256=<hex>`, the HMAC-SHA256 of `<timestamp>.<body>`: verify it and reject old timestamps. Redirects are not followed, since that would send the signed body somewhere else. The address is administrator configuration, never user input, and is treated as a secret (it is not printed or logged).
 - **Trying it.** The *Notifications* page and `POST /notifications/test` send a test message to every channel. `make demo` starts a local Mailpit, so the demo's e-mails can be read at <http://127.0.0.1:8025>.
 - Audited: `notifications.test`.
+
+Sign-in is audited too: `auth.login`, `auth.lockout`, `auth.password_change`, `auth.password_reset_cli`, `auth.bootstrap_admin`, `auth.settings`, `local_user.create`, `.update`, `.reset_password`, `.delete` and `oidc_provider.create`, `.update`, `.delete`. Entries name accounts and providers, never passwords or tokens.
 
 ## Security properties
 
