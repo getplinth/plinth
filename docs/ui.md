@@ -27,6 +27,7 @@ For UI development run `make demo` in one terminal and `cd web && npm run dev` i
 | Approvals | admins | requests waiting for a decision, what each would create, with Approve and Reject (a reason is required to reject); the navigation shows how many wait for you |
 | Integrations | admins | add, check, replace and delete connections to Git, registry, clusters and databases |
 | Blueprints | admins | combine integrations into what developers can request |
+| Quota tiers | admins | the sizes developers choose: namespace totals and per-container defaults |
 | Audit log | admins | who changed what |
 
 ## Sign-in

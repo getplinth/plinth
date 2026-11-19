@@ -30,6 +30,7 @@ func (s *Server) storeError(w http.ResponseWriter, err error) {
 	var taken store.ErrNamespaceTaken
 	var badRef store.ErrBadReference
 	var verrs request.Errors
+	var tierBusy store.ErrTierInUse
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "not found")
@@ -47,6 +48,10 @@ func (s *Server) storeError(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusForbidden, store.ErrSelfApproval.Error()+"; another administrator has to")
 	case errors.Is(err, store.ErrForbidden):
 		writeErr(w, http.StatusForbidden, "you do not have permission to do this")
+	case errors.Is(err, store.ErrDefaultTier):
+		writeErr(w, http.StatusConflict, err.Error())
+	case errors.As(err, &tierBusy):
+		writeErr(w, http.StatusConflict, tierBusy.Error())
 	case errors.Is(err, store.ErrInUse):
 		writeErr(w, http.StatusConflict, "still referenced by other objects")
 	case errors.Is(err, store.ErrConflict):

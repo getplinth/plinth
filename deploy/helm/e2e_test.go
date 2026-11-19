@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -235,8 +236,12 @@ func TestInstalledChart(t *testing.T) {
 			t.Fatalf("config: %d %s", code, body)
 		}
 		// Both replicas started at the same moment and migrated safely.
-		if n := psql(t, "select count(*) from schema_migrations"); n != "2" {
-			t.Errorf("applied migrations = %s, want 2", n)
+		files, err := filepath.Glob("../../internal/store/migrations/*.sql")
+		if err != nil || len(files) == 0 {
+			t.Fatalf("cannot count the migrations: %v", err)
+		}
+		if n, want := psql(t, "select count(*) from schema_migrations"), fmt.Sprint(len(files)); n != want {
+			t.Errorf("applied migrations = %s, want %s (every migration exactly once)", n, want)
 		}
 		for _, p := range pods(t) {
 			logs := kubectl(t, "logs", p)

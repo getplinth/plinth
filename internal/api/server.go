@@ -99,6 +99,8 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/v1/blueprints", s.admin(s.createBlueprint))
 	mux.Handle("PUT /api/v1/blueprints/{name}", s.admin(s.replaceBlueprint))
 	mux.Handle("DELETE /api/v1/blueprints/{name}", s.admin(s.deleteBlueprint))
+	mux.Handle("PUT /api/v1/quota-tiers/{name}", s.admin(s.putTier))
+	mux.Handle("DELETE /api/v1/quota-tiers/{name}", s.admin(s.deleteTier))
 	mux.Handle("POST /api/v1/requests/{id}/approve", s.admin(s.decide(store.DecisionApprove)))
 	mux.Handle("POST /api/v1/requests/{id}/reject", s.admin(s.decide(store.DecisionReject)))
 	mux.Handle("GET /api/v1/audit", s.admin(s.listAudit))

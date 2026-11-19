@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/getplinth/plinth/internal/onboarding"
+	"github.com/getplinth/plinth/internal/quota"
 	"github.com/getplinth/plinth/internal/request"
 	"github.com/getplinth/plinth/internal/store"
 )
@@ -115,6 +116,43 @@ func (s *Server) listTiers(w http.ResponseWriter, r *http.Request, c caller) {
 		return
 	}
 	writeJSON(w, http.StatusOK, tiers)
+}
+
+func (s *Server) putTier(w http.ResponseWriter, r *http.Request, c caller) {
+	name := r.PathValue("name")
+	var t quota.Tier
+	if !readJSON(w, r, &t) {
+		return
+	}
+	if !quota.ValidName(name) {
+		writeErr(w, http.StatusBadRequest, "the tier name must be lowercase letters, digits and dashes, at most 31 characters")
+		return
+	}
+	if problems := t.Validate(); len(problems) > 0 {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "validation failed", "details": problems})
+		return
+	}
+	created, err := s.d.Store.PutTier(r.Context(), name, t)
+	if err != nil {
+		s.storeError(w, err)
+		return
+	}
+	action, status := "quota_tier.update", http.StatusOK
+	if created {
+		action, status = "quota_tier.create", http.StatusCreated
+	}
+	s.audit(r.Context(), c, action, name, t)
+	writeJSON(w, status, t)
+}
+
+func (s *Server) deleteTier(w http.ResponseWriter, r *http.Request, c caller) {
+	name := r.PathValue("name")
+	if err := s.d.Store.DeleteTier(r.Context(), name); err != nil {
+		s.storeError(w, err)
+		return
+	}
+	s.audit(r.Context(), c, "quota_tier.delete", name, nil)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func validBlueprint(b *store.Blueprint) string {

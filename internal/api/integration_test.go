@@ -1890,3 +1890,102 @@ func TestMasterKeyRotation(t *testing.T) {
 		}
 	})
 }
+
+// ---- quota tier management ------------------------------------------------------------------------
+
+func TestQuotaTiers(t *testing.T) {
+	e := newEnv(t)
+	alice, admin := e.alice(), e.admin()
+	e.expect(201, admin, "POST", "/api/v1/integrations", map[string]any{"kind": "gitsource", "driver": "fake", "name": "git", "config": map[string]string{"a": "b"}})
+	e.expect(201, admin, "POST", "/api/v1/integrations", map[string]any{"kind": "cluster", "driver": "fake", "name": "cl", "config": map[string]string{"name": "dev"}})
+	e.expect(201, admin, "POST", "/api/v1/blueprints", map[string]any{
+		"name": "open", "git_source": "git", "environments": []map[string]any{{"name": "dev", "cluster": "cl"}}})
+
+	tier := func(pods int) map[string]any {
+		r := func(cpu, mem string) map[string]string { return map[string]string{"cpu": cpu, "memory": mem} }
+		return map[string]any{"pods": pods, "requests": r("4", "4Gi"), "limits": r("6", "6Gi"),
+			"limitRange": map[string]any{"min": r("100m", "128Mi"), "max": r("2", "2Gi"), "default": r("500m", "512Mi"), "defaultRequest": r("250m", "256Mi")}}
+	}
+	submit := func(token, team, quotaTier string) int {
+		code, _, _ := e.call(token, "POST", "/api/v1/requests", fmt.Sprintf(`{"blueprint":"open","tenant":%q,"projects":[{"name":"app","quota":%q}]}`, team, quotaTier))
+		return code
+	}
+	tiers := func() map[string]any {
+		v, _ := e.expect(200, alice, "GET", "/api/v1/quota-tiers", nil)
+		return v.(map[string]any)
+	}
+
+	if submit(alice, "tier-team", "platinum") != 422 {
+		t.Fatal("an unknown tier must be refused before it exists")
+	}
+
+	t.Run("only administrators change tiers", func(t *testing.T) {
+		e.expect(403, alice, "PUT", "/api/v1/quota-tiers/platinum", tier(20))
+		e.expect(403, alice, "DELETE", "/api/v1/quota-tiers/silver", nil)
+		e.expect(401, "", "PUT", "/api/v1/quota-tiers/platinum", tier(20))
+		if _, ok := tiers()["platinum"]; ok {
+			t.Fatal("created by a non-admin")
+		}
+	})
+
+	t.Run("create, use and change a tier", func(t *testing.T) {
+		e.expect(201, admin, "PUT", "/api/v1/quota-tiers/platinum", tier(20))
+		if got := get(tiers()["platinum"], "pods"); got != float64(20) {
+			t.Fatalf("pods = %v", got)
+		}
+		if code := submit(alice, "tier-team", "platinum"); code != 202 {
+			t.Fatalf("a request for the new tier: %d", code)
+		}
+		e.expect(200, admin, "PUT", "/api/v1/quota-tiers/platinum", tier(25))
+		if got := get(tiers()["platinum"], "pods"); got != float64(25) {
+			t.Errorf("after update pods = %v", got)
+		}
+		// Built-in tiers can be tuned too.
+		e.expect(200, admin, "PUT", "/api/v1/quota-tiers/silver", tier(12))
+	})
+
+	t.Run("a tier that Kubernetes would refuse is explained, not stored", func(t *testing.T) {
+		bad := tier(0)
+		bad["requests"] = map[string]string{"cpu": "lots", "memory": "9Gi"} // memory request above the 6Gi limit
+		_, raw := e.expect(422, admin, "PUT", "/api/v1/quota-tiers/broken", bad)
+		for _, want := range []string{"pods must be between", `requests CPU \"lots\" is not a quantity`, "requests memory must not exceed limits memory"} {
+			if !strings.Contains(raw, want) {
+				t.Errorf("missing %q in %s", want, raw)
+			}
+		}
+		if _, ok := tiers()["broken"]; ok {
+			t.Error("an invalid tier was stored")
+		}
+		e.expect(400, admin, "PUT", "/api/v1/quota-tiers/Not_Valid", tier(5))
+		e.expect(400, admin, "PUT", "/api/v1/quota-tiers/ok", "{not json")
+	})
+
+	t.Run("deleting", func(t *testing.T) {
+		e.expect(409, admin, "DELETE", "/api/v1/quota-tiers/bronze", nil) // the default for projects that name none
+		e.expect(404, admin, "DELETE", "/api/v1/quota-tiers/nope", nil)
+
+		// platinum is named by the request above: while it is unfinished it stays.
+		e.exec(`UPDATE requests SET status = 'failed' WHERE payload @> '{"tenant":"tier-team"}'`)
+		code, _, raw := e.call(admin, "DELETE", "/api/v1/quota-tiers/platinum", nil)
+		if code != 409 || !strings.Contains(raw, "1 unfinished request") {
+			t.Errorf("a tier that unfinished requests use: %d %s", code, raw)
+		}
+		e.exec(`UPDATE requests SET status = 'succeeded' WHERE payload @> '{"tenant":"tier-team"}'`)
+		e.expect(204, admin, "DELETE", "/api/v1/quota-tiers/platinum", nil)
+		if _, ok := tiers()["platinum"]; ok {
+			t.Error("still listed")
+		}
+		if submit(alice, "tier-team", "platinum") != 422 {
+			t.Error("a deleted tier must be refused again")
+		}
+	})
+
+	t.Run("changes are audited", func(t *testing.T) {
+		_, raw := e.expect(200, admin, "GET", "/api/v1/audit?limit=200", nil)
+		for _, want := range []string{"quota_tier.create", "quota_tier.update", "quota_tier.delete"} {
+			if !strings.Contains(raw, want) {
+				t.Errorf("no %s entry", want)
+			}
+		}
+	})
+}

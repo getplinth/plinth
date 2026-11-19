@@ -112,10 +112,16 @@ export interface AuditEntry {
   detail?: unknown
 }
 
+export interface Resources {
+  cpu: string
+  memory: string
+}
+
 export interface QuotaTier {
   pods: number
-  requests: { cpu: string; memory: string }
-  limits: { cpu: string; memory: string }
+  requests: Resources
+  limits: Resources
+  limitRange: { min: Resources; max: Resources; default: Resources; defaultRequest: Resources }
 }
 
 export type TeamRole = 'owner' | 'member'

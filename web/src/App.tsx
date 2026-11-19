@@ -4,6 +4,7 @@ import { Mark } from './components'
 import { ApprovalsPage } from './pages/Approvals'
 import { AuditPage } from './pages/Audit'
 import { BlueprintsPage } from './pages/Blueprints'
+import { TiersPage } from './pages/Tiers'
 import { IntegrationsPage } from './pages/Integrations'
 import { NewRequestPage } from './pages/NewRequest'
 import { RequestPage } from './pages/RequestDetail'
@@ -63,6 +64,7 @@ export function App() {
           <Route path="admin/approvals" element={<AdminOnly><ApprovalsPage /></AdminOnly>} />
           <Route path="admin/integrations" element={<AdminOnly><IntegrationsPage /></AdminOnly>} />
           <Route path="admin/blueprints" element={<AdminOnly><BlueprintsPage /></AdminOnly>} />
+          <Route path="admin/tiers" element={<AdminOnly><TiersPage /></AdminOnly>} />
           <Route path="admin/audit" element={<AdminOnly><AuditPage /></AdminOnly>} />
           <Route path="*" element={<NotFound />} />
         </Route>

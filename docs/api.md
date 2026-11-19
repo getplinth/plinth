@@ -43,6 +43,8 @@ The role is refreshed from the token on every call, so removing someone from the
 | `GET /api/v1/blueprints`, `GET /{name}` | user | admins see everything; users see name, environments, whether a database and registry exist |
 | `POST`, `PUT /{name}`, `DELETE /{name}` | admin | manage blueprints |
 | `GET /api/v1/quota-tiers` | user | available tiers |
+| `PUT /api/v1/quota-tiers/{name}` | admin | create (`201`) or replace (`200`) a tier; every problem is listed at once (`422`) |
+| `DELETE /api/v1/quota-tiers/{name}` | admin | delete a tier (`204`); refused (`409`) for `bronze`, the default, and while unfinished requests name the tier |
 | `POST /api/v1/requests` | user | submit `{blueprint, tenant, projects[]}`; returns `202` and the request |
 | `GET /api/v1/requests`, `GET /{id}` | user | your requests and your teams' (`?all=true` for admins; `?status=awaiting_approval` filters); status, per-step state, outputs, and the decision |
 | `GET /api/v1/tenants`, `GET /{name}` | user | teams you belong to (`?all=true` for admins), and one team with its members and projects |
@@ -98,6 +100,15 @@ A team (tenant) has **owners** and **members**. The first request for a new team
 - **Everything is audited**: `tenant.create`, `tenant.member.add`, `.role`, `.remove`, `.leave`, `tenant.invitation.create`, `.accept`, `.revoke`, with the e-mail addresses and roles involved.
 - Existing teams keep their owner when upgrading (migration `0003`).
 
+## Quota tiers
+
+A tier is the size of a project: how many pods a namespace may run, the namespace's total CPU and memory requests and limits (a ResourceQuota), and the smallest, largest and default size of each container (a LimitRange). Plinth checks a tier before storing it, so the cluster never receives one it would refuse: every quantity must parse (`500m`, `2`, `512Mi`), be above zero, and be consistent (requests not above limits; minimum, default request, default limit and maximum in that order; a container's maximum not above the namespace limits). Pods are 1 to 1000. Names are lowercase letters, digits and dashes, up to 31 characters.
+
+- **When a change applies.** To requests processed from then on. Namespaces that already exist keep what they were given until a request for them runs again (a retry, for example).
+- **What cannot be deleted.** `bronze`, because projects that name no tier get it, and any tier that a pending, running, failed or awaiting-approval request still names. Finished requests do not block it.
+- **Audited** as `quota_tier.create`, `.update` and `.delete`, with the tier's values.
+- The web interface has a *Quota tiers* page for administrators.
+
 ## Approval
 
 A blueprint can be marked **needs approval** (`requires_approval`). Requests for it are validated and stored as usual, but wait in `awaiting_approval`: no worker picks them up and no system is contacted until an administrator approves.
@@ -147,7 +158,7 @@ The server also serves the web app for every non-API path; see [ui.md](ui.md). P
 
 ## Not built yet
 
-Quota tier management endpoints and releasing a name reserved by a request that never succeeded.
+Releasing a name reserved by a request that never succeeded.
 
 ## Tests
 
