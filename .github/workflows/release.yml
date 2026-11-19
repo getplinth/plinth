@@ -1,0 +1,108 @@
+name: release
+# Runs when a version tag is pushed (see docs/releasing.md). It publishes the container image and the Helm chart to
+# ghcr.io, signs both, builds the binaries and creates the GitHub release. It has not run yet: expect to fix a step on the first tag.
+on:
+  push:
+    tags: ["v*.*.*"]
+permissions: {}
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write     # create the release
+      packages: write     # push the image and the chart
+      id-token: write     # keyless signing with the workflow's identity
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Work out the version
+        id: v
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+      - name: The changelog must describe this version
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          if ! grep -q "^## \[${VERSION}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no section '## [${VERSION}]'. Add it (see docs/releasing.md) and tag again."
+            exit 1
+          fi
+          awk -v v="$VERSION" '$0 ~ "^## \\[" v "\\]" {on=1; next} /^## \[/ {on=0} on' CHANGELOG.md > release-notes.md
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+      - uses: sigstore/cosign-installer@v3
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the container image
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/${{ steps.v.outputs.owner }}/plinth:${{ steps.v.outputs.version }}
+          build-args: VERSION=${{ steps.v.outputs.version }}
+          sbom: true
+          provenance: mode=max
+      - name: Sign the image
+        env:
+          IMAGE: ghcr.io/${{ steps.v.outputs.owner }}/plinth@${{ steps.image.outputs.digest }}
+        run: cosign sign --yes "$IMAGE"
+
+      - name: Package, push and sign the Helm chart
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          OWNER: ${{ steps.v.outputs.owner }}
+        run: |
+          mkdir -p dist
+          helm package deploy/helm/plinth --version "$VERSION" --app-version "$VERSION" --destination dist
+          helm push "dist/plinth-${VERSION}.tgz" "oci://ghcr.io/${OWNER}/charts" 2>&1 | tee push.log
+          digest="$(sed -n 's/^Digest: //p' push.log)"
+          test -n "$digest"
+          cosign sign --yes "ghcr.io/${OWNER}/charts/plinth@${digest}"
+
+      - name: Build the binaries
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          (cd web && npm ci && npm run build)
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os="${target%/*}"; arch="${target#*/}"
+            name="plinth_${VERSION}_${os}_${arch}"
+            mkdir -p "dist/${name}"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath \
+              -ldflags "-s -w -X github.com/getplinth/plinth/internal/api.Version=${VERSION}" \
+              -o "dist/${name}/plinth" ./cmd/plinth
+            cp LICENSE NOTICE THIRD_PARTY_NOTICES.md "dist/${name}/"
+            cp -r third_party "dist/${name}/third_party"
+            tar -C dist -czf "dist/${name}.tar.gz" "$name"
+          done
+          (cd dist && sha256sum ./*.tar.gz > checksums.txt)
+          cosign sign-blob --yes dist/checksums.txt --output-signature dist/checksums.txt.sig --output-certificate dist/checksums.txt.pem
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          flags=""
+          case "$VERSION" in *-*) flags="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/checksums.txt dist/checksums.txt.sig dist/checksums.txt.pem \
+            --title "Plinth ${VERSION}" --notes-file release-notes.md --verify-tag $flags

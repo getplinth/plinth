@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/getplinth/plinth/security/advisories/new
+    about: Please do not open a public issue for a vulnerability. Use private vulnerability reporting.
+  - name: Ask a question or share an idea
+    url: https://github.com/getplinth/plinth/discussions
+    about: For questions, ideas and "how do I...". Use an issue for a bug or a concrete proposal.

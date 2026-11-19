@@ -1,0 +1,9 @@
+* text=auto eol=lf
+*.sh text eol=lf
+*.woff2 binary
+
+# Keep generated and vendored files out of language statistics and diffs.
+go.sum linguist-generated
+web/package-lock.json linguist-generated
+third_party/** linguist-vendored
+docs/** linguist-documentation

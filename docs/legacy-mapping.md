@@ -1,12 +1,12 @@
-# Legacy mapping: DevPort scripts to Plinth
+# Where Plinth came from: the scripts it replaces
 
-Source: `../devport-automation`
+Plinth began as a replacement for a set of shell scripts (with a Python validator and a partial Node port, called "DevPort"
+internally) that a pipeline ran to onboard a team: a GitLab group and repositories, an Azure Container Registry project, Kubernetes
+namespaces with quotas and RBAC, and Postgres or MySQL databases. **Those scripts are not part of this repository.** This page
+records what Plinth took from them, and the rules it keeps compatible so that teams onboarded by such scripts can be adopted
+without renaming anything. It is also useful if you are moving from a similar set of scripts of your own.
 
-- `legacy_scripts/*.sh` + `validate_onboarding_json.py`: the **complete** implementation (~1,500 lines). Treat as the spec.
-- `src/` (Node, ~560 lines): an **incomplete** port. Registry and secrets are ACR-only, MongoDB is a stub, DB credentials are never delivered, and the default task runs only GitLab + k8s. Do not use it as a spec.
-- `legacy_scripts/gitlab_k8s_vars.sh` is an older combined version of `registry_onboard.sh` + `secrets_onboard.sh`. It is superseded; ignore it.
-
-All paths below are relative to `devport-automation/`.
+File names such as `legacy_scripts/registry_onboard.sh` below are the original scripts' and are given for orientation only.
 
 ## 1. Domain model the scripts imply
 
@@ -110,9 +110,9 @@ Cluster auth in the scripts: client cert + key + CA + API server URL per env (`K
 
 Things to decide or fix when porting (I have not run these manifests):
 - RoleBinding SA subject has no `namespace`, and `roleRef` has no `apiGroup`. The Kubernetes API normally requires both. Check that the legacy apply really succeeds.
-- The Role has **no `persistentvolumeclaims`**, but `devport-app-template/k8s/` ships a `pvc.yaml`. Also no `replicasets`/`statefulsets`, and `extensions` is a removed API group.
+- The Role has **no `persistentvolumeclaims`**, but the original application template's `k8s/` directory ships a `pvc.yaml`. Also no `replicasets`/`statefulsets`, and `extensions` is a removed API group.
 - Role grants full CRUD on **secrets** to the whole group, including the DB and registry credentials. Consider read-only for humans and full only for the CI identity.
-- NetworkPolicy has no egress rules and no default-deny. The group binding assumes OIDC groups prefixed `gitlab:` (see `devport-kb/docs/platform-admin-guide/oidc-setup.md`), so make the group prefix a cluster-integration setting.
+- NetworkPolicy has no egress rules and no default-deny. The group binding assumes OIDC groups prefixed `gitlab:`, so make the group prefix a cluster-integration setting.
 
 ### 3.4 `Database` (database_onboard.sh)
 

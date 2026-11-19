@@ -2,7 +2,34 @@ name: ci
 on: [push, pull_request]
 permissions:
   contents: read
+# A newer push to the same branch or pull request makes the older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
+  # What the repository promises about itself: shipped licences, its own scripts, links in the docs.
+  repo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go mod download
+      - run: make licenses
+      - run: make check-scripts
+  # Every commit in a pull request must be signed off (Developer Certificate of Origin, see CONTRIBUTING.md).
+  dco:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: scripts/check-dco.sh "$BASE" "$HEAD"
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
   web:
     runs-on: ubuntu-latest
     steps:

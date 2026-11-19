@@ -1,0 +1,38 @@
+name: New driver
+description: Propose or announce a driver for another Git host, registry, cluster type or database
+labels: [driver, enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Drivers are the most welcome contribution. Read [CONTRIBUTING.md](https://github.com/getplinth/plinth/blob/main/CONTRIBUTING.md#writing-a-driver) and an existing driver's page in [docs/drivers](https://github.com/getplinth/plinth/tree/main/docs/drivers) first.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of system
+      options: [Git host, Container registry, Kubernetes distribution or cluster, Database, Secret store, Other]
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Which system and versions?
+    validations:
+      required: true
+  - type: textarea
+    id: mapping
+    attributes:
+      label: How do Plinth's concepts map onto it?
+      description: For example, what is a "team" and a "project" there, what credential can be created for a project, and how is it revoked?
+  - type: textarea
+    id: test
+    attributes:
+      label: How can it be tested against a real, disposable instance?
+      description: Drivers are tested against the real system (a container, a local cluster). Is there one we can start in CI?
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Who will write it?
+      options:
+        - label: I intend to write it
+        - label: I would test it but cannot write it

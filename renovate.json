@@ -1,0 +1,79 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    ":semanticCommitsDisabled"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "timezone": "UTC",
+  "prConcurrentLimit": 5,
+  "postUpdateOptions": [
+    "gomodTidy"
+  ],
+  "packageRules": [
+    {
+      "description": "The Kubernetes libraries move together",
+      "matchPackageNames": [
+        "k8s.io/*",
+        "sigs.k8s.io/*"
+      ],
+      "groupName": "kubernetes libraries"
+    },
+    {
+      "description": "Go x/ packages together",
+      "matchPackageNames": [
+        "golang.org/x/*"
+      ],
+      "groupName": "golang.org/x"
+    },
+    {
+      "description": "Web build and test tools",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchDepTypes": [
+        "devDependencies"
+      ],
+      "groupName": "web dev tools"
+    },
+    {
+      "description": "React and its router",
+      "matchPackageNames": [
+        "react",
+        "react-dom",
+        "react-router-dom",
+        "@types/react",
+        "@types/react-dom"
+      ],
+      "groupName": "react"
+    },
+    {
+      "description": "GitHub Actions",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "github actions"
+    },
+    {
+      "description": "Major updates get their own pull requests and are never grouped",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": null
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "labels": [
+      "security"
+    ],
+    "schedule": [
+      "at any time"
+    ]
+  }
+}

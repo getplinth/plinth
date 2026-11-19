@@ -1,0 +1,8 @@
+Plinth
+Copyright 2026 The Plinth Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It includes third-party software under other licences, listed with their
+copyright notices in THIRD_PARTY_NOTICES.md. The text of the licences of the
+bundled fonts is in third_party/fonts/.

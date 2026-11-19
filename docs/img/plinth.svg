@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 26 26" role="img" aria-label="Plinth">
+  <title>Plinth</title>
+  <rect x="5" y="3" width="17" height="6" rx="1.5" fill="#1f7a6d"/>
+  <rect x="2" y="10" width="20" height="6" rx="1.5" fill="#1f7a6d" opacity="0.72"/>
+  <rect x="4" y="17" width="20" height="6" rx="1.5" fill="#1f7a6d" opacity="0.46"/>
+</svg>

@@ -1,4 +1,4 @@
-.PHONY: helm-test helm-e2e build web test itest itest-k8s itest-db itest-git itest-registry itest-app e2e lint run up down demo stack stack-status stack-stop stack-down
+.PHONY: licenses check-scripts helm-test helm-e2e build web test itest itest-k8s itest-db itest-git itest-registry itest-app e2e lint run up down demo stack stack-status stack-stop stack-down
 
 web: ## build the web interface into web/dist (embedded by the next `go build`)
 	cd web && npm ci && npm run build
@@ -38,6 +38,15 @@ helm-test: ## lint and render the Helm chart with many value sets (needs helm)
 
 helm-e2e: ## install the chart on a throwaway k3d cluster and test it (slow; needs Docker, k3d, kubectl, helm)
 	./scripts/helm-e2e.sh
+
+licenses: ## the licences of everything that ships; fails on copyleft (needs `go mod download`)
+	python3 scripts/check-licenses.py
+
+check-scripts: ## tests of the repository's own scripts, and the links in the docs
+	python3 scripts/test_check_licenses.py
+	python3 scripts/test_check_docs.py
+	./scripts/test-check-dco.sh
+	python3 scripts/check-docs.py
 
 lint:
 	go vet ./...

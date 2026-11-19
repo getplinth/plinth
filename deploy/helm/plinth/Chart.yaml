@@ -6,6 +6,17 @@ version: 0.1.0
 appVersion: "0.1.0"
 kubeVersion: ">=1.25.0-0"
 home: https://github.com/getplinth/plinth
+icon: https://raw.githubusercontent.com/getplinth/plinth/main/docs/img/plinth.svg
+maintainers:
+  - name: Plinth maintainers
+    url: https://github.com/getplinth/plinth/blob/main/MAINTAINERS.md
 sources:
   - https://github.com/getplinth/plinth
 keywords: [platform-engineering, onboarding, developer-portal, self-service]
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://github.com/getplinth/plinth/tree/main/docs
+    - name: Security policy
+      url: https://github.com/getplinth/plinth/blob/main/SECURITY.md

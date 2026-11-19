@@ -1,0 +1,6 @@
+# Who is asked to review what. Replace the handle with a team (@getplinth/maintainers) once there is one.
+*                       @chinmaymjog
+/internal/auth/         @chinmaymjog
+/internal/crypto/       @chinmaymjog
+/SECURITY.md            @chinmaymjog
+/.github/               @chinmaymjog
