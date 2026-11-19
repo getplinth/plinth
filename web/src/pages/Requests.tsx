@@ -75,7 +75,7 @@ export function RequestsPage() {
                         <StackGlyph rec={r} />
                         <div>
                           <StatusPill status={r.status} />
-                          <div className="sub">{r.status === 'awaiting_approval' ? 'Waiting for an administrator' : r.status === 'rejected' || r.status === 'cancelled' ? 'Nothing was set up' : p.total > 0 ? `${p.done} of ${p.total} steps` : ''}</div>
+                          <div className="sub">{r.status === 'awaiting_approval' ? 'Waiting for an administrator' : r.status === 'rejected' || r.status === 'cancelled' ? 'Nothing was set up' : r.status === 'abandoned' ? 'Given up' : p.total > 0 ? `${p.done} of ${p.total} steps` : ''}</div>
                         </div>
                       </div>
                     </td>

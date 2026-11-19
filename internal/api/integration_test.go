@@ -1989,3 +1989,107 @@ func TestQuotaTiers(t *testing.T) {
 		}
 	})
 }
+
+// ---- releasing the names of a failed request ----------------------------------------------------------
+
+func TestReleaseNames(t *testing.T) {
+	e := newEnv(t)
+	alice, bob, admin := e.alice(), e.bob(), e.admin()
+	e.expect(201, admin, "POST", "/api/v1/integrations", map[string]any{"kind": "gitsource", "driver": "fake", "name": "git", "config": map[string]string{"a": "b"}})
+	e.expect(201, admin, "POST", "/api/v1/integrations", map[string]any{"kind": "cluster", "driver": "fake", "name": "cl", "config": map[string]string{"name": "dev"}})
+	e.expect(201, admin, "POST", "/api/v1/blueprints", map[string]any{
+		"name": "open", "git_source": "git", "environments": []map[string]any{{"name": "dev", "cluster": "cl"}}})
+
+	failing := func(ns string, fail bool) {
+		world.mu.Lock()
+		world.failNS[ns] = fail
+		world.mu.Unlock()
+	}
+	submit := func(token, team, project string) string {
+		v, _ := e.expect(202, token, "POST", "/api/v1/requests", fmt.Sprintf(`{"blueprint":"open","tenant":%q,"projects":[{"name":%q}]}`, team, project))
+		return get(v, "id").(string)
+	}
+	projects := func(team string) []string {
+		v, _ := e.expect(200, admin, "GET", "/api/v1/tenants/"+team, nil)
+		var out []string
+		for _, p := range get(v, "projects").([]any) {
+			out = append(out, p.(string))
+		}
+		return out
+	}
+
+	// A request that fails for good keeps its names, so nobody else can take them.
+	failing("rel-a-b-c", true)
+	first := submit(alice, "rel-a-b", "c")
+	e.waitStatus(alice, first, "failed")
+	e.expect(409, bob, "POST", "/api/v1/requests", `{"blueprint":"open","tenant":"rel-a","projects":[{"name":"b-c"}]}`)
+
+	t.Run("only administrators release, only failed requests, and with a reason", func(t *testing.T) {
+		e.expect(403, alice, "POST", "/api/v1/requests/"+first+"/release", map[string]string{"note": "cleaned up"})
+		e.expect(403, bob, "POST", "/api/v1/requests/"+first+"/release", map[string]string{"note": "cleaned up"})
+		_, raw := e.expect(400, admin, "POST", "/api/v1/requests/"+first+"/release", map[string]string{"note": " "})
+		if !strings.Contains(raw, "say why") {
+			t.Errorf("the message should ask for a reason: %s", raw)
+		}
+		ok := submit(alice, "rel-ok", "app")
+		e.waitStatus(alice, ok, "succeeded")
+		e.expect(409, admin, "POST", "/api/v1/requests/"+ok+"/release", map[string]string{"note": "not failed"})
+		e.expect(404, admin, "POST", "/api/v1/requests/"+"00000000-0000-0000-0000-000000000000"+"/release", map[string]string{"note": "no such"})
+	})
+
+	t.Run("releasing frees the names and says what was left behind", func(t *testing.T) {
+		v, _ := e.expect(200, admin, "POST", "/api/v1/requests/"+first+"/release", map[string]string{"note": "deleted the half-made repo by hand"})
+		if get(v, "status") != "abandoned" || get(v, "decision_note") != "deleted the half-made repo by hand" || get(v, "decided_by") != "admin@example.test" {
+			t.Fatalf("%v", v)
+		}
+		// A different team can use the names now.
+		failing("rel-a-b-c", false)
+		e.expect(202, bob, "POST", "/api/v1/requests", `{"blueprint":"open","tenant":"rel-a","projects":[{"name":"b-c"}]}`)
+		// It cannot be released or retried again.
+		e.expect(409, admin, "POST", "/api/v1/requests/"+first+"/release", map[string]string{"note": "again"})
+		e.expect(409, alice, "POST", "/api/v1/requests/"+first+"/retry", nil)
+		// The audit entry lists the steps that had run, so someone can clean up.
+		_, raw := e.expect(200, admin, "GET", "/api/v1/audit?limit=50", nil)
+		if !strings.Contains(raw, "request.release") || !strings.Contains(raw, "left_in_place") || !strings.Contains(raw, "git/repo/c") {
+			t.Errorf("audit should list what was left in place: %s", raw)
+		}
+		// And it can be found by status.
+		list, _ := e.expect(200, admin, "GET", "/api/v1/requests?all=true&status=abandoned", nil)
+		if len(list.([]any)) != 1 {
+			t.Errorf("abandoned requests: %v", list)
+		}
+	})
+
+	t.Run("a name a newer request of the same team still wants is kept", func(t *testing.T) {
+		failing("rel-keep-app", true)
+		old := submit(alice, "rel-keep", "app")
+		e.waitStatus(alice, old, "failed")
+		newer := submit(alice, "rel-keep", "app") // the team submits it again
+		e.waitStatus(alice, newer, "failed")
+		e.expect(200, admin, "POST", "/api/v1/requests/"+old+"/release", map[string]string{"note": "superseded"})
+		if got := projects("rel-keep"); len(got) != 1 || got[0] != "app" {
+			t.Fatalf("the project the newer request needs must stay: %v", got)
+		}
+		// Releasing the last one that wants it does free it.
+		e.expect(200, admin, "POST", "/api/v1/requests/"+newer+"/release", map[string]string{"note": "gave up"})
+		if got := projects("rel-keep"); len(got) != 0 {
+			t.Errorf("nobody wants the name any more, so it must be free: %v", got)
+		}
+		if n := e.rawQuery(`SELECT count(*)::text FROM projects WHERE namespace = 'rel-keep-app'`); n != "0" {
+			t.Errorf("the namespace is still reserved: %s", n)
+		}
+	})
+
+	t.Run("projects that already existed are never released", func(t *testing.T) {
+		old := submit(alice, "rel-pre", "old")
+		e.waitStatus(alice, old, "succeeded")
+		failing("rel-pre-new", true)
+		v, _ := e.expect(202, alice, "POST", "/api/v1/requests", `{"blueprint":"open","tenant":"rel-pre","projects":[{"name":"old"},{"name":"new"}]}`)
+		both := get(v, "id").(string)
+		e.waitStatus(alice, both, "failed")
+		e.expect(200, admin, "POST", "/api/v1/requests/"+both+"/release", map[string]string{"note": "dropping the new one"})
+		if got := projects("rel-pre"); len(got) != 1 || got[0] != "old" {
+			t.Errorf("only the name this request added may be freed: %v", got)
+		}
+	})
+}

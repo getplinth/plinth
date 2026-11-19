@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -52,6 +53,9 @@ const (
 	StatusRunning   = "running"
 	StatusSucceeded = "succeeded"
 	StatusFailed    = "failed"
+	// StatusAbandoned: a failed request an administrator gave up on. Its names
+	// were released, but what it had already created was left in place.
+	StatusAbandoned = "abandoned"
 )
 
 // RequestRecord is a stored onboarding request.
@@ -319,9 +323,12 @@ const (
 	DecisionApprove = "approve"
 	DecisionReject  = "reject"
 	DecisionCancel  = "cancel"
+	// DecisionRelease gives up a failed request and frees its names.
+	DecisionRelease = "release"
 )
 
-// Decision is an approve, reject or cancel of a request awaiting approval.
+// Decision is an approve, reject or cancel of a request awaiting approval, or
+// the release of a failed one.
 type Decision struct {
 	Action     string
 	ActorID    string
@@ -339,6 +346,12 @@ type Decision struct {
 //
 // Rejecting or cancelling releases the names the request reserved, so another
 // tenant can use them. The decision and its note are written to the audit log.
+//
+// Release is the one decision on a failed request: administrators only, and
+// it needs a note. It ends the request as abandoned and frees its names, but
+// removes nothing the request had already created in other systems, and the
+// audit entry lists the steps that had run so someone can clean up. Until that
+// is done a team that reuses the names would adopt the leftovers.
 func (s *Store) DecideRequest(ctx context.Context, id string, d Decision) (RequestRecord, error) {
 	if !isUUID(id) {
 		return RequestRecord{}, ErrNotFound
@@ -353,12 +366,40 @@ func (s *Store) DecideRequest(ctx context.Context, id string, d Decision) (Reque
 	if err := tx.QueryRow(ctx, `SELECT status, requested_by::text, tenant_id::text FROM requests WHERE id = $1 FOR UPDATE`, id).Scan(&status, &requester, &tenantID); err != nil {
 		return RequestRecord{}, mapErr(err)
 	}
-	if status != StatusAwaiting {
+	want := StatusAwaiting
+	if d.Action == DecisionRelease {
+		want = StatusFailed
+	}
+	if status != want {
 		return RequestRecord{}, ErrConflict
 	}
 
 	var next string
+	var detail = map[string]any{"note": d.Note}
 	switch d.Action {
+	case DecisionRelease:
+		if !d.ActorAdmin {
+			return RequestRecord{}, ErrForbidden
+		}
+		next = StatusAbandoned
+		var raw []byte
+		if err := tx.QueryRow(ctx, `SELECT state FROM requests WHERE id = $1`, id).Scan(&raw); err != nil {
+			return RequestRecord{}, err
+		}
+		var st struct {
+			Steps map[string]struct {
+				Status string `json:"status"`
+			} `json:"steps"`
+		}
+		_ = json.Unmarshal(raw, &st)
+		var ran []string
+		for name, s := range st.Steps {
+			if s.Status == "succeeded" || s.Status == "failed" || s.Status == "running" {
+				ran = append(ran, name)
+			}
+		}
+		sort.Strings(ran)
+		detail["left_in_place"] = ran
 	case DecisionApprove:
 		if !d.ActorAdmin {
 			return RequestRecord{}, ErrForbidden
@@ -392,18 +433,58 @@ func (s *Store) DecideRequest(ctx context.Context, id string, d Decision) (Reque
 		id, next, d.ActorID, d.Note); err != nil {
 		return RequestRecord{}, err
 	}
-	if next == StatusRejected || next == StatusCancelled {
-		// Free the reserved names. Only rows this request created are removed;
-		// a project that existed before it stays.
-		if _, err := tx.Exec(ctx, `DELETE FROM projects WHERE request_id = $1`, id); err != nil {
+	if next == StatusRejected || next == StatusCancelled || next == StatusAbandoned {
+		if err := freeNames(ctx, tx, id, tenantID); err != nil {
 			return RequestRecord{}, err
 		}
 	}
-	if err := audit(ctx, tx, d.ActorEmail, "request."+d.Action, id, map[string]any{"note": d.Note}); err != nil {
+	if err := audit(ctx, tx, d.ActorEmail, "request."+d.Action, id, detail); err != nil {
 		return RequestRecord{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return RequestRecord{}, err
 	}
 	return s.GetRequest(ctx, id)
+}
+
+// freeNames deletes the project names a request reserved. Only rows this
+// request created go; a project that existed before it stays. A name is kept
+// while another live request of the same team asks for it (a team that submits
+// again after a failure reuses the same name, and that new request still needs
+// the row): live means anything but rejected, cancelled or abandoned. When the
+// last such request is given up, the row it kept alive goes too.
+func freeNames(ctx context.Context, tx pgx.Tx, requestID, tenantID string) error {
+	rows, err := tx.Query(ctx, `SELECT payload FROM requests
+		WHERE tenant_id = $1 AND id <> $2 AND status NOT IN ('rejected','cancelled','abandoned')`, tenantID, requestID)
+	if err != nil {
+		return err
+	}
+	wanted := map[string]bool{}
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			rows.Close()
+			return err
+		}
+		var req request.Request
+		if json.Unmarshal(raw, &req) == nil {
+			for _, p := range req.Projects {
+				wanted[p.Normalized()] = true
+			}
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	names := []string{}
+	for n := range wanted {
+		names = append(names, n)
+	}
+	// Rows owned by this request, and rows owned by any earlier request that was
+	// also given up (a newer request kept them alive until now).
+	_, err = tx.Exec(ctx, `DELETE FROM projects p USING requests r
+		WHERE p.request_id = r.id AND p.tenant_id = $1 AND NOT (p.name = ANY($2))
+		  AND (r.id = $3 OR r.status IN ('rejected','cancelled','abandoned'))`, tenantID, names, requestID)
+	return err
 }

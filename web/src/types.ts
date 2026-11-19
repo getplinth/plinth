@@ -37,7 +37,7 @@ export interface RequestPayload {
   projects: ProjectInput[]
 }
 
-export type RequestStatus = 'awaiting_approval' | 'pending' | 'running' | 'succeeded' | 'failed' | 'rejected' | 'cancelled'
+export type RequestStatus = 'awaiting_approval' | 'pending' | 'running' | 'succeeded' | 'failed' | 'rejected' | 'cancelled' | 'abandoned'
 
 export interface RequestRecord {
   id: string

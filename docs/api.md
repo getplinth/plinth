@@ -55,6 +55,7 @@ The role is refreshed from the token on every call, so removing someone from the
 | `POST /api/v1/requests/{id}/approve` | admin, never the requester | release a request that is awaiting approval (optional `note`) |
 | `POST /api/v1/requests/{id}/reject` | admin | refuse it; a `note` of at least 3 characters is required |
 | `POST /api/v1/requests/{id}/cancel` | owner or admin | withdraw a request that is awaiting approval |
+| `POST /api/v1/requests/{id}/release` | admin | give up a failed request and free its names; a `note` of at least 3 characters is required. Nothing it created is removed |
 | `GET /api/v1/audit` | admin | who did what |
 
 ## Request lifecycle
@@ -71,12 +72,26 @@ stateDiagram-v2
   running --> failed: a step failed after its attempts
   running --> pending: worker shut down / lease expired
   failed --> pending: retry (owner or admin)
+  failed --> abandoned: given up by an administrator, names released
   succeeded --> [*]
   rejected --> [*]
   cancelled --> [*]
+  abandoned --> [*]
 ```
 
 A worker claims a request with a lease (`FOR UPDATE SKIP LOCKED`) and refreshes it each time it saves progress. If the worker dies the lease expires and another worker resumes from the saved state. A worker that loses its lease stops without recording an outcome. On shutdown, running requests are handed back at once.
+
+### Names and releasing them
+
+A request reserves the names it will create (team and project, which together give a namespace, registry project and Git path that are unique across all teams) the moment it is submitted. Rejecting or withdrawing a request frees them. A request that **fails** keeps them, because it can be retried and nobody else should take what it half-built.
+
+If a failed request will never be fixed, an administrator can **release** it (the *Give up…* button on the request, or `POST /requests/{id}/release`). The request ends as `abandoned` and the names are free for anyone.
+
+- **Nothing is deleted.** Plinth does not remove the repository, registry project, namespace or database the request had already created, because it cannot tell what is safe to delete. The steps run or tried are shown before confirming and written to the audit entry (`left_in_place`). Clean them up first: the setup steps are idempotent, so a team that later uses the same names adopts whatever is still there, including another team's leftover data.
+- **Why only administrators, and why a reason.** Because of the above. The reason (3 to 500 characters) goes in the audit log, with who did it.
+- **Only what this request added.** A project that existed before it stays. A name is also kept while another live request of the same team still asks for it (a team that submits again after a failure), and is freed when the last one is given up.
+- **Final.** An abandoned request cannot be retried or released again; submit a new one.
+- Audited as `request.release`.
 
 ## Teams
 
@@ -158,7 +173,7 @@ The server also serves the web app for every non-API path; see [ui.md](ui.md). P
 
 ## Not built yet
 
-Releasing a name reserved by a request that never succeeded.
+Notifications (nobody is e-mailed or messaged about invitations, approvals or failures).
 
 ## Tests
 

@@ -38,7 +38,7 @@ export function StackGlyph({ rec }: { rec: RequestRecord }) {
   )
 }
 
-const pillClass: Record<string, string> = { succeeded: 'accent', failed: 'bad', running: 'accent', pending: '', awaiting_approval: 'warn', rejected: 'bad', cancelled: '' }
+const pillClass: Record<string, string> = { succeeded: 'accent', failed: 'bad', running: 'accent', pending: '', awaiting_approval: 'warn', rejected: 'bad', cancelled: '', abandoned: 'bad' }
 
 export function StatusPill({ status }: { status: string }) {
   return <span className={`chip ${pillClass[status] ?? ''}`}>{statusLabel[status] ?? status}</span>

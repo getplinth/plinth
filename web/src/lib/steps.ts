@@ -116,6 +116,7 @@ export const statusLabel: Record<string, string> = {
   awaiting_approval: 'Needs approval',
   rejected: 'Rejected',
   cancelled: 'Withdrawn',
+  abandoned: 'Given up',
   pending: 'Queued',
   running: 'Running',
   succeeded: 'Done',

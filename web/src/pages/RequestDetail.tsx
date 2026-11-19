@@ -1,7 +1,7 @@
-import { useCallback } from 'react'
+import { useCallback, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api'
-import { Banner, ConfirmButton, Courses, ErrorBanner, StatusPill } from '../components'
+import { Banner, ConfirmButton, Courses, ErrorBanner, Field, StatusPill } from '../components'
 import { useAction, useLoad } from '../hooks'
 import { fullTime, relativeTime } from '../lib/format'
 import { progress } from '../lib/steps'
@@ -18,6 +18,51 @@ function outputRows(rec: RequestRecord): [string, string][] {
     rows.push([k, v])
   }
   return rows.sort((a, b) => a[0].localeCompare(b[0]))
+}
+
+/** Steps that ran (or tried to) and so may have left something behind. */
+function leftBehind(rec: RequestRecord): string[] {
+  return Object.entries(rec.state.steps)
+    .filter(([, s]) => s.status === 'succeeded' || s.status === 'failed' || s.status === 'running')
+    .map(([k]) => k)
+    .sort()
+}
+
+function ReleaseForm({ rec, onDone, onCancel }: { rec: RequestRecord; onDone: () => void; onCancel: () => void }) {
+  const [note, setNote] = useState('')
+  const sendFn = useCallback(async () => {
+    await api(`/requests/${rec.id}/release`, { method: 'POST', body: { note: note.trim() } })
+    onDone()
+  }, [rec.id, note, onDone])
+  const send = useAction(sendFn)
+  const ran = leftBehind(rec)
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (note.trim().length >= 3) await send.run()
+  }
+  return (
+    <form className="panel" onSubmit={submit} noValidate>
+      <h2>Give up this request</h2>
+      <p>
+        The team and project names it reserved become free for anyone to use. <b>Nothing that was already created is removed.</b> Clean
+        it up first, or whoever uses the names next will pick it up.
+      </p>
+      {ran.length > 0 && (
+        <>
+          <p className="hint">These steps ran or were tried, so something may exist:</p>
+          <ul className="plain mono">{ran.map((s) => <li key={s}>{s}</li>)}</ul>
+        </>
+      )}
+      <ErrorBanner message={send.error} details={send.details} />
+      <Field id="release-note" label="Why is it given up?" hint="Kept in the audit log. For example what you cleaned up.">
+        <input id="release-note" type="text" autoComplete="off" value={note} onChange={(e) => setNote(e.target.value)} />
+      </Field>
+      <div className="actions">
+        <button className="btn danger" disabled={send.busy || note.trim().length < 3}>{send.busy ? 'Releasing…' : 'Release the names'}</button>
+        <button type="button" className="btn" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
+  )
 }
 
 export function RequestPage() {
@@ -38,6 +83,7 @@ export function RequestPage() {
   }, [id, reload])
   const withdraw = useAction(withdrawFn)
   const me = useMe()
+  const [releasing, setReleasing] = useState(false)
   // Teammates may retry; owners may also withdraw. A missing team (not a member) just means no extra rights.
   const team = useLoad(async (s) => (rec ? api<Team>(`/tenants/${rec.tenant}`, { signal: s }).catch(() => null) : null), [rec?.tenant])
   const teamRole = team.data?.role ?? ''
@@ -67,7 +113,7 @@ export function RequestPage() {
             <span>Blueprint <b>{rec.blueprint}</b></span>
             <span>Requested by <b>{rec.requested_by}</b></span>
             <span title={fullTime(rec.created_at)}>{relativeTime(rec.created_at)}</span>
-            {rec.decided_by && rec.status !== 'rejected' && rec.status !== 'cancelled' && <span>Approved by <b>{rec.decided_by}</b></span>}
+            {rec.decided_by && rec.status !== 'rejected' && rec.status !== 'cancelled' && rec.status !== 'abandoned' && <span>Approved by <b>{rec.decided_by}</b></span>}
           </p>
         </div>
         <div className="actions">
@@ -76,14 +122,27 @@ export function RequestPage() {
           {rec.status === 'awaiting_approval' && (me.role === 'admin' || teamRole === 'owner' || rec.requested_by === me.email) && (
             <ConfirmButton label="Withdraw request" confirmLabel="Confirm withdraw" disabled={withdraw.busy} onConfirm={() => void withdraw.run()} />
           )}
-          {rec.status === 'failed' && (me.role === 'admin' || teamRole !== '') && (
+          {rec.status === 'abandoned' && (
+        <Banner kind="info" title={`Given up by ${rec.decided_by ?? 'an administrator'}.`}>
+          {' '}
+          {rec.decision_note ? <>Reason: “{rec.decision_note}” </> : null}
+          The names are free again. What the steps below had already created was not removed.
+        </Banner>
+      )}
+      {rec.status === 'failed' && (me.role === 'admin' || teamRole !== '') && (
             <button className="btn primary" disabled={retry.busy} onClick={() => void retry.run()}>
               {retry.busy ? 'Retrying…' : 'Retry failed steps'}
             </button>
           )}
+          {rec.status === 'failed' && me.role === 'admin' && !releasing && (
+            <button className="btn" onClick={() => setReleasing(true)}>Give up…</button>
+          )}
         </div>
       </div>
 
+      {releasing && rec.status === 'failed' && (
+        <ReleaseForm rec={rec} onCancel={() => setReleasing(false)} onDone={() => { setReleasing(false); reload() }} />
+      )}
       <ErrorBanner message={retry.error} details={retry.details} />
       <ErrorBanner message={withdraw.error} details={withdraw.details} />
       {rec.status === 'awaiting_approval' && (

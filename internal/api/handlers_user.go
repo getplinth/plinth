@@ -320,7 +320,7 @@ func (s *Server) submitRequest(w http.ResponseWriter, r *http.Request, c caller)
 
 var validStatus = map[string]bool{
 	store.StatusAwaiting: true, store.StatusPending: true, store.StatusRunning: true,
-	store.StatusSucceeded: true, store.StatusFailed: true, store.StatusRejected: true, store.StatusCancelled: true,
+	store.StatusSucceeded: true, store.StatusFailed: true, store.StatusRejected: true, store.StatusCancelled: true, store.StatusAbandoned: true,
 }
 
 // decisionBody is the optional note that goes with an approval decision.
@@ -346,6 +346,9 @@ func (s *Server) decide(action string) handlerFunc {
 			return
 		case action == store.DecisionReject && len(note) < 3:
 			writeErr(w, http.StatusBadRequest, "give a reason for rejecting, so the requester knows what to change")
+			return
+		case action == store.DecisionRelease && len(note) < 3:
+			writeErr(w, http.StatusBadRequest, "say why the request is given up (for example what was cleaned up), so the audit log explains it")
 			return
 		}
 		rec, err := s.d.Store.GetRequest(r.Context(), r.PathValue("id"))

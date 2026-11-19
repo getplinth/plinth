@@ -103,6 +103,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("DELETE /api/v1/quota-tiers/{name}", s.admin(s.deleteTier))
 	mux.Handle("POST /api/v1/requests/{id}/approve", s.admin(s.decide(store.DecisionApprove)))
 	mux.Handle("POST /api/v1/requests/{id}/reject", s.admin(s.decide(store.DecisionReject)))
+	mux.Handle("POST /api/v1/requests/{id}/release", s.admin(s.decide(store.DecisionRelease)))
 	mux.Handle("GET /api/v1/audit", s.admin(s.listAudit))
 	mux.Handle("GET /api/v1/drivers", s.admin(s.listDrivers))
 
